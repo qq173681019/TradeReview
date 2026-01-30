@@ -419,17 +419,17 @@ class StockWatchlist {
     }
 
     calculateAlertLevel(currentPrice, sellPrice) {
-        // Calculate percentage difference: positive means above sell price, negative means below
+        // Calculate percentage difference: negative means price dropped below sell price (loss)
         const percentDiff = ((currentPrice - sellPrice) / sellPrice) * 100;
         
-        if (percentDiff >= 15) {
-            // 15% or more above sell price - GREEN (safe)
+        if (percentDiff >= -1) {
+            // At or slightly below sell price (within 1%) - GREEN (safe)
             return 'safe';
-        } else if (percentDiff >= 8) {
-            // 8-15% above sell price - YELLOW (caution)
+        } else if (percentDiff >= -8) {
+            // 1-8% below sell price - YELLOW (caution - approaching warning zone)
             return 'caution';
         } else {
-            // Less than 8% above (or below) sell price - RED (critical)
+            // More than 8% below sell price - RED (critical - significant loss)
             return 'critical';
         }
     }
@@ -512,8 +512,8 @@ class StockWatchlist {
             const percentDiff = ((stock.currentPrice - stock.sellPrice) / stock.sellPrice) * 100;
             const alertLevel = this.calculateAlertLevel(stock.currentPrice, stock.sellPrice);
             
-            // Show popup for stocks with 15% or more profit
-            if (percentDiff >= 15 && this.shouldNotify(stock.id)) {
+            // Show popup for stocks with 15% or more loss (dropped significantly below sell price)
+            if (percentDiff <= -15 && this.shouldNotify(stock.id)) {
                 this.showPopupNotification(stock, percentDiff);
             }
             
@@ -524,8 +524,8 @@ class StockWatchlist {
     }
 
     showPopupNotification(stock, percentDiff) {
-        // Show browser alert for significant profit opportunity
-        alert(`🎉 重要提醒！\n\n${stock.name} (${stock.code})\n当前价格已超过卖出价格 ${percentDiff.toFixed(2)}%\n\n当前价格: ¥${stock.currentPrice.toFixed(2)}\n卖出价格: ¥${stock.sellPrice.toFixed(2)}\n\n建议立即关注！`);
+        // Show browser alert for significant loss warning
+        alert(`⚠️ 重要警告！\n\n${stock.name} (${stock.code})\n当前价格已跌破卖出价格 ${Math.abs(percentDiff).toFixed(2)}%\n\n当前价格: ¥${stock.currentPrice.toFixed(2)}\n卖出价格: ¥${stock.sellPrice.toFixed(2)}\n\n价格大幅下跌，建议立即关注！`);
         
         // Mark as notified
         localStorage.setItem(`notify_${stock.id}`, new Date().toISOString());
