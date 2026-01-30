@@ -1,7 +1,8 @@
-// Mock stock database - simulates an API that would fetch real stock data
-const MOCK_STOCK_DATABASE = {
+// Fallback mock database for when APIs are blocked (ad-blockers, CORS, etc.)
+const FALLBACK_STOCK_DATABASE = {
     '000001': { name: '平安银行', price: 13.50 },
     '000002': { name: '万科A', price: 10.80 },
+    '000066': { name: '中国长城', price: 15.20 },
     '600519': { name: '贵州茅台', price: 1570.00 },
     '601318': { name: '中国平安', price: 55.00 },
     '600036': { name: '招商银行', price: 42.50 },
@@ -14,7 +15,9 @@ const MOCK_STOCK_DATABASE = {
     '600030': { name: '中信证券', price: 24.80 },
     '000333': { name: '美的集团', price: 52.30 },
     '601166': { name: '兴业银行', price: 20.50 },
-    '600016': { name: '民生银行', price: 4.50 }
+    '600016': { name: '民生银行', price: 4.50 },
+    '300750': { name: '宁德时代', price: 175.50 },
+    '002594': { name: '比亚迪', price: 245.80 }
 };
 
 // Stock watchlist application
@@ -64,7 +67,7 @@ class StockWatchlist {
         });
     }
 
-    fetchStockInfo() {
+    async fetchStockInfo() {
         const code = document.getElementById('stockCode').value.trim();
         const preview = document.getElementById('stockPreview');
         
@@ -73,20 +76,34 @@ class StockWatchlist {
             return;
         }
 
-        const stockData = this.getStockData(code);
-        
-        if (stockData) {
-            // Show preview with fetched data
-            document.getElementById('previewCode').textContent = code;
-            document.getElementById('previewName').textContent = stockData.name;
-            document.getElementById('previewPrice').textContent = stockData.price.toFixed(2);
-            preview.style.display = 'block';
-        } else {
+        // Show loading state
+        preview.style.display = 'block';
+        document.getElementById('previewCode').textContent = code;
+        document.getElementById('previewName').textContent = '加载中...';
+        document.getElementById('previewPrice').textContent = '...';
+
+        try {
+            const stockData = await this.getStockData(code);
+            
+            if (stockData) {
+                // Show preview with fetched data
+                document.getElementById('previewCode').textContent = code;
+                document.getElementById('previewName').textContent = stockData.name;
+                document.getElementById('previewPrice').textContent = stockData.price.toFixed(2);
+                preview.style.display = 'block';
+            } else {
+                preview.style.display = 'none';
+                // Show friendly error
+                alert(`未找到股票代码 ${code} 的信息。请检查股票代码是否正确。`);
+            }
+        } catch (error) {
+            console.error('获取股票信息失败:', error);
             preview.style.display = 'none';
+            alert(`获取股票信息失败，请稍后重试。`);
         }
     }
 
-    addStock() {
+    async addStock() {
         const code = document.getElementById('stockCode').value.trim();
         const sellPrice = parseFloat(document.getElementById('sellPrice').value);
 
@@ -100,31 +117,237 @@ class StockWatchlist {
             return;
         }
 
-        // Fetch stock data from mock database
-        const stockData = this.getStockData(code);
-        
-        if (!stockData) {
-            alert(`未找到股票代码 ${code} 的信息。请输入有效的股票代码。`);
-            return;
+        try {
+            // Fetch stock data from real APIs
+            const stockData = await this.getStockData(code);
+            
+            if (!stockData) {
+                alert(`未找到股票代码 ${code} 的信息。请输入有效的股票代码。`);
+                return;
+            }
+
+            const stock = {
+                id: Date.now(),
+                code,
+                name: stockData.name,
+                currentPrice: stockData.price,
+                sellPrice,
+                addedDate: new Date().toISOString()
+            };
+
+            this.stocks.push(stock);
+            this.saveStocks();
+            this.renderStocks();
+            this.clearForm();
+        } catch (error) {
+            console.error('添加股票失败:', error);
+            alert('添加股票失败，请稍后重试。');
         }
-
-        const stock = {
-            id: Date.now(),
-            code,
-            name: stockData.name,
-            currentPrice: stockData.price,
-            sellPrice,
-            addedDate: new Date().toISOString()
-        };
-
-        this.stocks.push(stock);
-        this.saveStocks();
-        this.renderStocks();
-        this.clearForm();
     }
 
-    getStockData(code) {
-        return MOCK_STOCK_DATABASE[code] || null;
+    async getStockData(code) {
+        // Validate stock code format (6 digits)
+        if (!/^\d{6}$/.test(code)) {
+            return null;
+        }
+
+        // Determine market prefix (Shanghai or Shenzhen)
+        const prefix = code.startsWith('6') ? 'sh' : 'sz';
+        const fullCode = prefix + code;
+        
+        // Try Sina Finance API using JSONP-style script loading
+        try {
+            const data = await this.fetchStockFromSina(fullCode);
+            if (data) {
+                console.log(`✓ 成功从新浪财经API获取股票数据: ${code}`);
+                return data;
+            }
+        } catch (error) {
+            console.warn('Sina API failed:', error);
+        }
+
+        // Try Tencent API as fallback
+        try {
+            const data = await this.fetchStockFromTencent(fullCode);
+            if (data) {
+                console.log(`✓ 成功从腾讯财经API获取股票数据: ${code}`);
+                return data;
+            }
+        } catch (error) {
+            console.warn('Tencent API failed:', error);
+        }
+
+        // If both APIs fail (blocked by ad-blocker or CORS), use fallback database
+        console.warn(`⚠️ API被阻止，使用备用数据库: ${code}`);
+        if (FALLBACK_STOCK_DATABASE[code]) {
+            console.log(`✓ 从备用数据库找到股票: ${code} - ${FALLBACK_STOCK_DATABASE[code].name}`);
+            return FALLBACK_STOCK_DATABASE[code];
+        }
+
+        // If all methods fail, return null
+        return null;
+    }
+
+    fetchStockFromSina(fullCode) {
+        return new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            const callbackName = 'sina_callback_' + Date.now();
+            
+            // Sina API returns: var hq_str_sh600519="name,open,yclose,current,..."
+            window[callbackName] = function(data) {
+                delete window[callbackName];
+                if (script.parentNode) {
+                    script.parentNode.removeChild(script);
+                }
+                
+                // Parse the response from the global variable
+                const varName = 'hq_str_' + fullCode;
+                if (window[varName]) {
+                    const text = window[varName];
+                    const parts = text.split(',');
+                    if (parts.length >= 4) {
+                        const name = parts[0];
+                        const price = parseFloat(parts[3]);
+                        if (name && price > 0) {
+                            resolve({ name, price });
+                            return;
+                        }
+                    }
+                }
+                resolve(null);
+            };
+            
+            script.onerror = () => {
+                delete window[callbackName];
+                if (script.parentNode) {
+                    script.parentNode.removeChild(script);
+                }
+                reject(new Error('Script load failed'));
+            };
+            
+            // Sina doesn't use callback parameter, it sets a global variable
+            script.src = `https://hq.sinajs.cn/list=${fullCode}`;
+            script.onload = () => {
+                // Check if the global variable was set
+                setTimeout(() => {
+                    const varName = 'hq_str_' + fullCode;
+                    const value = eval('typeof ' + varName + ' !== "undefined" ? ' + varName + ' : null');
+                    if (value) {
+                        const parts = value.split(',');
+                        if (parts.length >= 4) {
+                            const name = parts[0];
+                            const price = parseFloat(parts[3]);
+                            if (name && price > 0) {
+                                delete window[callbackName];
+                                if (script.parentNode) {
+                                    script.parentNode.removeChild(script);
+                                }
+                                resolve({ name, price });
+                                return;
+                            }
+                        }
+                    }
+                    delete window[callbackName];
+                    if (script.parentNode) {
+                        script.parentNode.removeChild(script);
+                    }
+                    resolve(null);
+                }, 100);
+            };
+            
+            // Timeout
+            setTimeout(() => {
+                if (window[callbackName]) {
+                    delete window[callbackName];
+                    if (script.parentNode) {
+                        script.parentNode.removeChild(script);
+                    }
+                    reject(new Error('Timeout'));
+                }
+            }, 5000);
+            
+            document.head.appendChild(script);
+        });
+    }
+
+    fetchStockFromTencent(fullCode) {
+        return new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            const callbackName = 'tencent_callback_' + Date.now();
+            
+            // Tencent returns: v_${code}="...~name~...~price~..."
+            window[callbackName] = function() {
+                delete window[callbackName];
+                if (script.parentNode) {
+                    script.parentNode.removeChild(script);
+                }
+                
+                // Parse from global variable
+                const varName = 'v_' + fullCode;
+                if (window[varName]) {
+                    const text = window[varName];
+                    const parts = text.split('~');
+                    if (parts.length >= 4) {
+                        const name = parts[1];
+                        const price = parseFloat(parts[3]);
+                        if (name && price > 0) {
+                            resolve({ name, price });
+                            return;
+                        }
+                    }
+                }
+                resolve(null);
+            };
+            
+            script.onerror = () => {
+                delete window[callbackName];
+                if (script.parentNode) {
+                    script.parentNode.removeChild(script);
+                }
+                reject(new Error('Script load failed'));
+            };
+            
+            script.src = `https://qt.gtimg.cn/q=${fullCode}`;
+            script.onload = () => {
+                setTimeout(() => {
+                    const varName = 'v_' + fullCode;
+                    const value = eval('typeof ' + varName + ' !== "undefined" ? ' + varName + ' : null');
+                    if (value) {
+                        const parts = value.split('~');
+                        if (parts.length >= 4) {
+                            const name = parts[1];
+                            const price = parseFloat(parts[3]);
+                            if (name && price > 0) {
+                                delete window[callbackName];
+                                if (script.parentNode) {
+                                    script.parentNode.removeChild(script);
+                                }
+                                resolve({ name, price });
+                                return;
+                            }
+                        }
+                    }
+                    delete window[callbackName];
+                    if (script.parentNode) {
+                        script.parentNode.removeChild(script);
+                    }
+                    resolve(null);
+                }, 100);
+            };
+            
+            // Timeout
+            setTimeout(() => {
+                if (window[callbackName]) {
+                    delete window[callbackName];
+                    if (script.parentNode) {
+                        script.parentNode.removeChild(script);
+                    }
+                    reject(new Error('Timeout'));
+                }
+            }, 5000);
+            
+            document.head.appendChild(script);
+        });
     }
 
     deleteStock(id) {
@@ -144,12 +367,20 @@ class StockWatchlist {
         }
     }
 
-    simulatePriceUpdates() {
-        // Simulate small random price changes
-        this.stocks.forEach(stock => {
-            const change = (Math.random() - 0.5) * 0.2; // Random change between -0.1 and +0.1
-            stock.currentPrice = Math.max(0.01, stock.currentPrice + change);
-        });
+    async simulatePriceUpdates() {
+        // Fetch real-time prices for all stocks in the watchlist
+        for (const stock of this.stocks) {
+            try {
+                const stockData = await this.getStockData(stock.code);
+                if (stockData && stockData.price > 0) {
+                    stock.currentPrice = stockData.price;
+                    stock.name = stockData.name; // Update name in case it changed
+                }
+            } catch (error) {
+                console.warn(`Failed to update price for ${stock.code}:`, error);
+                // Keep the old price if update fails
+            }
+        }
         this.saveStocks();
         this.renderStocks();
     }
@@ -286,11 +517,27 @@ class StockWatchlist {
         }
     }
 
-    promptUpdatePrice(id) {
+    async promptUpdatePrice(id) {
         const stock = this.stocks.find(s => s.id === id);
         if (!stock) return;
         
-        const newPrice = prompt(`更新 ${stock.name} (${stock.code}) 的当前价格:`, stock.currentPrice.toFixed(2));
+        // First, try to fetch the latest price from API
+        try {
+            const stockData = await this.getStockData(stock.code);
+            if (stockData && stockData.price > 0) {
+                stock.currentPrice = stockData.price;
+                stock.name = stockData.name; // Update name too
+                this.saveStocks();
+                this.renderStocks();
+                alert(`已更新 ${stock.name} (${stock.code}) 的当前价格为 ¥${stockData.price.toFixed(2)}`);
+                return;
+            }
+        } catch (error) {
+            console.warn('Auto-fetch price failed, falling back to manual input:', error);
+        }
+        
+        // If auto-fetch fails, allow manual input
+        const newPrice = prompt(`自动获取失败，请手动更新 ${stock.name} (${stock.code}) 的当前价格:`, stock.currentPrice.toFixed(2));
         
         if (newPrice !== null) {
             const price = parseFloat(newPrice);
