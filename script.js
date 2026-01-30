@@ -18,6 +18,21 @@ class StockWatchlist {
             e.preventDefault();
             this.addStock();
         });
+
+        // Event delegation for delete and update buttons
+        const stockList = document.getElementById('stockList');
+        stockList.addEventListener('click', (e) => {
+            const deleteBtn = e.target.closest('.btn-delete');
+            const updateBtn = e.target.closest('.btn-update');
+            
+            if (deleteBtn) {
+                const stockId = parseInt(deleteBtn.dataset.stockId);
+                this.deleteStock(stockId);
+            } else if (updateBtn) {
+                const stockId = parseInt(updateBtn.dataset.stockId);
+                this.promptUpdatePrice(stockId);
+            }
+        });
     }
 
     addStock() {
@@ -28,6 +43,11 @@ class StockWatchlist {
 
         if (!code || !name || isNaN(currentPrice) || isNaN(sellPrice)) {
             alert('请填写所有字段');
+            return;
+        }
+
+        if (currentPrice <= 0 || sellPrice <= 0) {
+            alert('价格必须大于零');
             return;
         }
 
@@ -101,6 +121,12 @@ class StockWatchlist {
         return texts[level] || '未知';
     }
 
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
     renderStocks() {
         const stockList = document.getElementById('stockList');
         
@@ -122,8 +148,8 @@ class StockWatchlist {
                     <div class="stock-card-content">
                         <div class="stock-header">
                             <div class="stock-info">
-                                <div class="stock-code">${stock.code}</div>
-                                <div class="stock-name">${stock.name}</div>
+                                <div class="stock-code">${this.escapeHtml(stock.code)}</div>
+                                <div class="stock-name">${this.escapeHtml(stock.name)}</div>
                             </div>
                         </div>
                         
@@ -143,12 +169,12 @@ class StockWatchlist {
                         </div>
                         
                         <div style="margin-top: 15px;">
-                            <button class="btn-update" onclick="app.promptUpdatePrice(${stock.id})">
+                            <button class="btn-update" data-stock-id="${stock.id}">
                                 更新当前价格
                             </button>
                         </div>
                     </div>
-                    <button class="btn-delete" onclick="app.deleteStock(${stock.id})">
+                    <button class="btn-delete" data-stock-id="${stock.id}">
                         删除
                     </button>
                 </div>
@@ -228,12 +254,18 @@ class StockWatchlist {
 
     loadStocks() {
         const stored = localStorage.getItem('stocks');
-        return stored ? JSON.parse(stored) : [];
+        if (!stored) return [];
+        
+        try {
+            return JSON.parse(stored);
+        } catch (e) {
+            console.error('Failed to parse stored stocks:', e);
+            return [];
+        }
     }
 }
 
 // Initialize the app
-let app;
 document.addEventListener('DOMContentLoaded', () => {
-    app = new StockWatchlist();
+    new StockWatchlist();
 });

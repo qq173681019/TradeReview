@@ -26,11 +26,11 @@
                 </div>
                 <div class="form-group">
                     <label for="currentPrice">当前价格 (¥):</label>
-                    <input type="number" id="currentPrice" step="0.01" placeholder="例: 15.50" required>
+                    <input type="number" id="currentPrice" step="0.01" min="0.01" placeholder="例: 15.50" required>
                 </div>
                 <div class="form-group">
                     <label for="sellPrice">卖出价格 (¥):</label>
-                    <input type="number" id="sellPrice" step="0.01" placeholder="例: 14.00" required>
+                    <input type="number" id="sellPrice" step="0.01" min="0.01" placeholder="例: 14.00" required>
                 </div>
                 <button type="submit" class="btn-add">添加到关注池</button>
             </form>
@@ -38,7 +38,7 @@
 
         <div class="watchlist-section">
             <h2>关注池股票列表</h2>
-            <div id="stockList" class="stock-list">
+            <div id="stockList" class="stock-list" role="region" aria-live="polite" aria-label="股票关注列表">
                 <p class="empty-message">关注池为空，请添加股票</p>
             </div>
         </div>
