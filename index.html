@@ -21,19 +21,17 @@
                     <input type="text" id="stockCode" placeholder="例: 000001" required>
                 </div>
                 <div class="form-group">
-                    <label for="stockName">股票名称:</label>
-                    <input type="text" id="stockName" placeholder="例: 平安银行" required>
-                </div>
-                <div class="form-group">
-                    <label for="currentPrice">当前价格 (¥):</label>
-                    <input type="number" id="currentPrice" step="0.01" min="0.01" placeholder="例: 15.50" required>
-                </div>
-                <div class="form-group">
                     <label for="sellPrice">卖出价格 (¥):</label>
                     <input type="number" id="sellPrice" step="0.01" min="0.01" placeholder="例: 14.00" required>
                 </div>
                 <button type="submit" class="btn-add">添加到关注池</button>
             </form>
+            <div id="stockPreview" class="stock-preview" style="display: none;">
+                <h3>股票信息预览</h3>
+                <p><strong>代码:</strong> <span id="previewCode"></span></p>
+                <p><strong>名称:</strong> <span id="previewName"></span></p>
+                <p><strong>当前价格:</strong> ¥<span id="previewPrice"></span></p>
+            </div>
         </div>
 
         <div class="watchlist-section">

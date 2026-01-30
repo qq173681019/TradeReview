@@ -1,3 +1,22 @@
+// Mock stock database - simulates an API that would fetch real stock data
+const MOCK_STOCK_DATABASE = {
+    '000001': { name: '平安银行', price: 13.50 },
+    '000002': { name: '万科A', price: 10.80 },
+    '600519': { name: '贵州茅台', price: 1570.00 },
+    '601318': { name: '中国平安', price: 55.00 },
+    '600036': { name: '招商银行', price: 42.50 },
+    '000858': { name: '五粮液', price: 168.50 },
+    '601398': { name: '工商银行', price: 5.80 },
+    '601939': { name: '建设银行', price: 7.20 },
+    '600000': { name: '浦发银行', price: 9.50 },
+    '601288': { name: '农业银行', price: 4.10 },
+    '601988': { name: '中国银行', price: 4.20 },
+    '600030': { name: '中信证券', price: 24.80 },
+    '000333': { name: '美的集团', price: 52.30 },
+    '601166': { name: '兴业银行', price: 20.50 },
+    '600016': { name: '民生银行', price: 4.50 }
+};
+
 // Stock watchlist application
 class StockWatchlist {
     constructor() {
@@ -19,6 +38,16 @@ class StockWatchlist {
             this.addStock();
         });
 
+        // Auto-fetch stock info when code is entered
+        const stockCodeInput = document.getElementById('stockCode');
+        stockCodeInput.addEventListener('blur', () => {
+            this.fetchStockInfo();
+        });
+        stockCodeInput.addEventListener('input', () => {
+            // Hide preview when user is typing
+            document.getElementById('stockPreview').style.display = 'none';
+        });
+
         // Event delegation for delete and update buttons
         const stockList = document.getElementById('stockList');
         stockList.addEventListener('click', (e) => {
@@ -35,27 +64,56 @@ class StockWatchlist {
         });
     }
 
+    fetchStockInfo() {
+        const code = document.getElementById('stockCode').value.trim();
+        const preview = document.getElementById('stockPreview');
+        
+        if (!code) {
+            preview.style.display = 'none';
+            return;
+        }
+
+        const stockData = MOCK_STOCK_DATABASE[code];
+        
+        if (stockData) {
+            // Show preview with fetched data
+            document.getElementById('previewCode').textContent = code;
+            document.getElementById('previewName').textContent = stockData.name;
+            document.getElementById('previewPrice').textContent = stockData.price.toFixed(2);
+            preview.style.display = 'block';
+        } else {
+            preview.style.display = 'none';
+            alert(`未找到股票代码 ${code} 的信息。\n\n可用的股票代码示例：\n000001 (平安银行)\n000002 (万科A)\n600519 (贵州茅台)\n601318 (中国平安)`);
+        }
+    }
+
     addStock() {
         const code = document.getElementById('stockCode').value.trim();
-        const name = document.getElementById('stockName').value.trim();
-        const currentPrice = parseFloat(document.getElementById('currentPrice').value);
         const sellPrice = parseFloat(document.getElementById('sellPrice').value);
 
-        if (!code || !name || isNaN(currentPrice) || isNaN(sellPrice)) {
+        if (!code || isNaN(sellPrice)) {
             alert('请填写所有字段');
             return;
         }
 
-        if (currentPrice <= 0 || sellPrice <= 0) {
+        if (sellPrice <= 0) {
             alert('价格必须大于零');
+            return;
+        }
+
+        // Fetch stock data from mock database
+        const stockData = MOCK_STOCK_DATABASE[code];
+        
+        if (!stockData) {
+            alert(`未找到股票代码 ${code} 的信息。请输入有效的股票代码。`);
             return;
         }
 
         const stock = {
             id: Date.now(),
             code,
-            name,
-            currentPrice,
+            name: stockData.name,
+            currentPrice: stockData.price,
             sellPrice,
             addedDate: new Date().toISOString()
         };
@@ -243,9 +301,8 @@ class StockWatchlist {
 
     clearForm() {
         document.getElementById('stockCode').value = '';
-        document.getElementById('stockName').value = '';
-        document.getElementById('currentPrice').value = '';
         document.getElementById('sellPrice').value = '';
+        document.getElementById('stockPreview').style.display = 'none';
     }
 
     saveStocks() {
