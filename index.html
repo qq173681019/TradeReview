@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>股票关注池 - Trade Review</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>股票关注池</h1>
+            <p class="subtitle">监控股票价格并及时提醒</p>
+        </header>
+
+        <div class="add-stock-section">
+            <h2>添加股票</h2>
+            <form id="addStockForm">
+                <div class="form-group">
+                    <label for="stockCode">股票代码:</label>
+                    <input type="text" id="stockCode" placeholder="例: 000001" required>
+                </div>
+                <div class="form-group">
+                    <label for="sellPrice">卖出价格 (¥):</label>
+                    <input type="number" id="sellPrice" step="0.01" min="0.01" placeholder="例: 14.00" required>
+                </div>
+                <button type="submit" class="btn-add">添加到关注池</button>
+            </form>
+            <div id="stockPreview" class="stock-preview" style="display: none;" role="status" aria-live="polite">
+                <h3>股票信息预览</h3>
+                <p><strong>代码:</strong> <span id="previewCode"></span></p>
+                <p><strong>名称:</strong> <span id="previewName"></span></p>
+                <p><strong>当前价格:</strong> ¥<span id="previewPrice"></span></p>
+            </div>
+        </div>
+
+        <div class="watchlist-section">
+            <div class="watchlist-header">
+                <h2>关注池股票列表</h2>
+                <button id="refreshAllBtn" class="btn-refresh-all">🔄 刷新所有价格</button>
+            </div>
+            <div id="stockList" class="stock-list" role="region" aria-live="polite" aria-label="股票关注列表">
+                <p class="empty-message">关注池为空，请添加股票</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
