@@ -73,7 +73,7 @@ class StockWatchlist {
             return;
         }
 
-        const stockData = MOCK_STOCK_DATABASE[code];
+        const stockData = this.getStockData(code);
         
         if (stockData) {
             // Show preview with fetched data
@@ -83,7 +83,6 @@ class StockWatchlist {
             preview.style.display = 'block';
         } else {
             preview.style.display = 'none';
-            alert(`未找到股票代码 ${code} 的信息。\n\n可用的股票代码示例：\n000001 (平安银行)\n000002 (万科A)\n600519 (贵州茅台)\n601318 (中国平安)`);
         }
     }
 
@@ -92,7 +91,7 @@ class StockWatchlist {
         const sellPrice = parseFloat(document.getElementById('sellPrice').value);
 
         if (!code || isNaN(sellPrice)) {
-            alert('请填写所有字段');
+            alert('请填写股票代码和卖出价格');
             return;
         }
 
@@ -102,7 +101,7 @@ class StockWatchlist {
         }
 
         // Fetch stock data from mock database
-        const stockData = MOCK_STOCK_DATABASE[code];
+        const stockData = this.getStockData(code);
         
         if (!stockData) {
             alert(`未找到股票代码 ${code} 的信息。请输入有效的股票代码。`);
@@ -122,6 +121,10 @@ class StockWatchlist {
         this.saveStocks();
         this.renderStocks();
         this.clearForm();
+    }
+
+    getStockData(code) {
+        return MOCK_STOCK_DATABASE[code] || null;
     }
 
     deleteStock(id) {
