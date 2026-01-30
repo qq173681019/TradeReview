@@ -65,6 +65,39 @@ class StockWatchlist {
                 this.promptUpdatePrice(stockId);
             }
         });
+
+        // Refresh all button
+        const refreshAllBtn = document.getElementById('refreshAllBtn');
+        if (refreshAllBtn) {
+            refreshAllBtn.addEventListener('click', () => {
+                this.refreshAllPrices();
+            });
+        }
+    }
+
+    async refreshAllPrices() {
+        const refreshBtn = document.getElementById('refreshAllBtn');
+        if (!refreshBtn) return;
+        
+        // Show loading state
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = '🔄 刷新中...';
+        
+        try {
+            await this.simulatePriceUpdates();
+            refreshBtn.textContent = '✓ 刷新完成';
+            setTimeout(() => {
+                refreshBtn.disabled = false;
+                refreshBtn.textContent = '🔄 刷新所有价格';
+            }, 1500);
+        } catch (error) {
+            console.error('Refresh failed:', error);
+            refreshBtn.textContent = '✗ 刷新失败';
+            setTimeout(() => {
+                refreshBtn.disabled = false;
+                refreshBtn.textContent = '🔄 刷新所有价格';
+            }, 1500);
+        }
     }
 
     async fetchStockInfo() {
@@ -386,27 +419,24 @@ class StockWatchlist {
     }
 
     calculateAlertLevel(currentPrice, sellPrice) {
-        const ratio = currentPrice / sellPrice;
+        // Calculate percentage difference: positive means above sell price, negative means below
+        const percentDiff = ((currentPrice - sellPrice) / sellPrice) * 100;
         
-        if (ratio <= 1.0) {
-            // At or below sell price - CRITICAL
-            return 'critical';
-        } else if (ratio <= 1.05) {
-            // Within 5% above sell price - WARNING
-            return 'warning';
-        } else if (ratio <= 1.10) {
-            // Within 10% above sell price - CAUTION
+        if (percentDiff >= 15) {
+            // 15% or more above sell price - GREEN (safe)
+            return 'safe';
+        } else if (percentDiff >= 8) {
+            // 8-15% above sell price - YELLOW (caution)
             return 'caution';
         } else {
-            // More than 10% above - SAFE
-            return 'safe';
+            // Less than 8% above (or below) sell price - RED (critical)
+            return 'critical';
         }
     }
 
     getAlertText(level) {
         const texts = {
             critical: '立即提醒',
-            warning: '接近目标',
             caution: '注意观察',
             safe: '正常'
         };
@@ -479,12 +509,26 @@ class StockWatchlist {
 
     checkAlerts() {
         this.stocks.forEach(stock => {
+            const percentDiff = ((stock.currentPrice - stock.sellPrice) / stock.sellPrice) * 100;
             const alertLevel = this.calculateAlertLevel(stock.currentPrice, stock.sellPrice);
+            
+            // Show popup for stocks with 15% or more profit
+            if (percentDiff >= 15 && this.shouldNotify(stock.id)) {
+                this.showPopupNotification(stock, percentDiff);
+            }
             
             if (alertLevel === 'critical' && this.shouldNotify(stock.id)) {
                 this.showNotification(stock);
             }
         });
+    }
+
+    showPopupNotification(stock, percentDiff) {
+        // Show browser alert for significant profit opportunity
+        alert(`🎉 重要提醒！\n\n${stock.name} (${stock.code})\n当前价格已超过卖出价格 ${percentDiff.toFixed(2)}%\n\n当前价格: ¥${stock.currentPrice.toFixed(2)}\n卖出价格: ¥${stock.sellPrice.toFixed(2)}\n\n建议立即关注！`);
+        
+        // Mark as notified
+        localStorage.setItem(`notify_${stock.id}`, new Date().toISOString());
     }
 
     shouldNotify(stockId) {

@@ -35,7 +35,10 @@
         </div>
 
         <div class="watchlist-section">
-            <h2>关注池股票列表</h2>
+            <div class="watchlist-header">
+                <h2>关注池股票列表</h2>
+                <button id="refreshAllBtn" class="btn-refresh-all">🔄 刷新所有价格</button>
+            </div>
             <div id="stockList" class="stock-list" role="region" aria-live="polite" aria-label="股票关注列表">
                 <p class="empty-message">关注池为空，请添加股票</p>
             </div>
