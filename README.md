@@ -53,5 +53,50 @@ TradeReview/
 ├── index.html      # 主页面
 ├── styles.css      # 样式文件
 ├── script.js       # JavaScript逻辑
+├── vercel.json     # Vercel部署配置
+├── .gitignore      # Git忽略文件
 └── README.md       # 说明文档
 ```
+
+## 部署到Vercel
+
+本项目已优化为移动端友好，支持一键部署到Vercel平台：
+
+### 方法一：通过Vercel网站部署
+
+1. 访问 [Vercel官网](https://vercel.com)
+2. 使用GitHub账号登录
+3. 点击 "New Project"
+4. 导入此GitHub仓库 `qq173681019/TradeReview`
+5. Vercel会自动检测配置，直接点击 "Deploy"
+6. 部署完成后，获得一个可访问的URL（如：`https://trade-review.vercel.app`）
+
+### 方法二：使用Vercel CLI
+
+```bash
+# 安装Vercel CLI
+npm install -g vercel
+
+# 在项目目录中运行
+cd TradeReview
+vercel
+
+# 按照提示完成部署
+```
+
+### 移动端优化特性
+
+- ✅ 响应式设计，完美支持手机、平板和桌面设备
+- ✅ 优化的触摸目标尺寸，更好的点击体验
+- ✅ 防止iOS自动缩放输入框
+- ✅ 改进的移动端布局和间距
+- ✅ PWA支持（可添加到主屏幕）
+- ✅ 快速加载和缓存优化
+
+### 访问部署后的应用
+
+部署成功后，您可以：
+- 在手机浏览器中访问Vercel提供的URL
+- 在iOS Safari中点击"添加到主屏幕"，像原生应用一样使用
+- 在Android Chrome中选择"安装应用"
+- 分享URL给其他人使用
