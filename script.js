@@ -423,22 +423,22 @@ class StockWatchlist {
         const percentDiff = ((currentPrice - sellPrice) / sellPrice) * 100;
         
         if (percentDiff >= -1) {
-            // At or slightly below sell price (within 1%) - GREEN (safe)
-            return 'safe';
+            // At or slightly below sell price (within 1%) - RED (上涨 - good for selling)
+            return 'rising';
         } else if (percentDiff >= -8) {
-            // 1-8% below sell price - YELLOW (caution - approaching warning zone)
-            return 'caution';
+            // 1-8% below sell price - YELLOW (持平 - neutral)
+            return 'neutral';
         } else {
-            // More than 8% below sell price - RED (critical - significant loss)
-            return 'critical';
+            // More than 8% below sell price - GREEN (下跌 - significant decline)
+            return 'falling';
         }
     }
 
     getAlertText(level) {
         const texts = {
-            critical: '立即提醒',
-            caution: '注意观察',
-            safe: '正常'
+            rising: '上涨',
+            neutral: '持平',
+            falling: '下跌'
         };
         return texts[level] || '未知';
     }
@@ -517,7 +517,7 @@ class StockWatchlist {
                 this.showPopupNotification(stock, percentDiff);
             }
             
-            if (alertLevel === 'critical' && this.shouldNotify(stock.id)) {
+            if (alertLevel === 'rising' && this.shouldNotify(stock.id)) {
                 this.showNotification(stock);
             }
         });
