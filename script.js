@@ -423,7 +423,7 @@ class StockWatchlist {
         const percentDiff = ((currentPrice - sellPrice) / sellPrice) * 100;
         
         if (percentDiff >= -1) {
-            // At or slightly below sell price (within 1%) - RED (上涨 - good for selling)
+            // At or slightly below sell price (within 1%) - RED (上涨 - approaching target)
             return 'rising';
         } else if (percentDiff >= -8) {
             // 1-8% below sell price - YELLOW (持平 - neutral)
