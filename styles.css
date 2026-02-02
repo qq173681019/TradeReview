@@ -10,6 +10,11 @@ body {
     min-height: 100vh;
     padding: 20px;
     color: #333;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    /* Prevent text size adjustment on orientation change */
+    -webkit-text-size-adjust: 100%;
+    -ms-text-size-adjust: 100%;
 }
 
 .container {
@@ -91,6 +96,11 @@ h2 {
     font-weight: 600;
     cursor: pointer;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
+    /* Better touch interaction */
+    -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
+    touch-action: manipulation;
+    /* Minimum touch target size for accessibility */
+    min-height: 44px;
 }
 
 .btn-add:hover {
@@ -155,6 +165,10 @@ h2 {
     font-size: 1em;
     font-weight: 600;
     transition: all 0.2s ease;
+    /* Better touch interaction */
+    -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
+    touch-action: manipulation;
+    min-height: 44px;
 }
 
 .btn-refresh-all:hover {
@@ -341,6 +355,11 @@ h2 {
     font-weight: 600;
     transition: all 0.2s ease;
     z-index: 10;
+    /* Better touch interaction */
+    -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
+    touch-action: manipulation;
+    min-height: 36px;
+    min-width: 60px;
 }
 
 .btn-delete:hover {
@@ -361,6 +380,10 @@ h2 {
     transition: all 0.2s ease;
     position: relative;
     z-index: 10;
+    /* Better touch interaction */
+    -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
+    touch-action: manipulation;
+    min-height: 36px;
 }
 
 .btn-update:hover {
@@ -369,16 +392,171 @@ h2 {
 }
 
 @media (max-width: 768px) {
+    body {
+        padding: 10px;
+    }
+
+    header {
+        margin-bottom: 20px;
+        padding: 20px 0;
+    }
+
     header h1 {
-        font-size: 2em;
+        font-size: 1.8em;
+    }
+
+    header .subtitle {
+        font-size: 1em;
     }
 
     .add-stock-section,
     .watchlist-section {
-        padding: 20px;
+        padding: 15px;
+        margin-bottom: 15px;
+    }
+
+    h2 {
+        font-size: 1.4em;
+    }
+
+    .form-group label {
+        font-size: 0.95em;
+    }
+
+    .form-group input {
+        padding: 10px 12px;
+        font-size: 16px; /* Prevents zoom on iOS */
+    }
+
+    .btn-add {
+        padding: 12px;
+        font-size: 1em;
+    }
+
+    .watchlist-header {
+        flex-direction: column;
+        gap: 10px;
+        align-items: stretch;
+    }
+
+    .watchlist-header h2 {
+        border-bottom: 2px solid #667eea;
+    }
+
+    .btn-refresh-all {
+        width: 100%;
+        padding: 12px;
+    }
+
+    .stock-card {
+        padding: 12px 15px;
+        padding-bottom: 50px; /* Space for delete button */
+        min-height: auto;
+    }
+
+    .stock-code {
+        font-size: 1.1em;
+    }
+
+    .stock-name {
+        font-size: 0.9em;
+    }
+
+    .stock-prices {
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-top: 8px;
+        padding-top: 8px;
+    }
+
+    .price-value {
+        font-size: 1.1em;
+    }
+
+    .price-difference {
+        font-size: 0.85em;
+        margin-top: 8px;
+    }
+
+    .alert-badge {
+        top: 8px;
+        right: 8px;
+        padding: 4px 10px;
+        font-size: 0.7em;
+    }
+
+    .btn-delete {
+        bottom: 12px;
+        right: 12px;
+        padding: 8px 12px;
+        font-size: 0.85em;
+    }
+
+    .btn-update {
+        padding: 8px 12px;
+        font-size: 0.85em;
+        width: 100%;
+    }
+
+    .stock-preview {
+        padding: 15px;
+        margin-top: 15px;
+    }
+
+    .stock-preview h3 {
+        font-size: 1.1em;
+    }
+
+    .stock-preview p {
+        font-size: 0.95em;
+    }
+}
+
+/* Extra small devices (phones in portrait, less than 576px) */
+@media (max-width: 576px) {
+    header h1 {
+        font-size: 1.5em;
+    }
+
+    header .subtitle {
+        font-size: 0.9em;
+    }
+
+    h2 {
+        font-size: 1.2em;
     }
 
     .stock-prices {
         grid-template-columns: 1fr;
+        gap: 6px;
+    }
+
+    .price-box {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 6px 10px;
+        background: rgba(0, 0, 0, 0.03);
+        border-radius: 6px;
+    }
+
+    .price-label {
+        font-size: 0.85em;
+        margin-bottom: 0;
+        text-align: left;
+    }
+
+    .price-value {
+        font-size: 1em;
+    }
+
+    .alert-badge {
+        position: static;
+        display: inline-block;
+        margin-bottom: 8px;
+    }
+
+    .stock-header {
+        margin-bottom: 8px;
     }
 }
