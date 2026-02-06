@@ -474,6 +474,9 @@ class StockWatchlist {
             
             // Less than 1 day: show hours
             if (diffDays < 1) {
+                if (diffHours === 0) {
+                    return '不到1小时';
+                }
                 return `${diffHours}小时`;
             } else {
                 return `${diffDays}天`;
