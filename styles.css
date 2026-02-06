@@ -216,21 +216,23 @@ h2 {
 }
 
 .stock-card.alert-deep-red {
-    border-left-color: #b91c1c;
-    background: linear-gradient(to right, rgba(185, 28, 28, 0.35) 0%, white 30%);
+    border-left-color: #991b1b;
+    border-left-width: 8px;
+    background: linear-gradient(to right, rgba(153, 27, 27, 0.5) 0%, rgba(153, 27, 27, 0.15) 50%, white 70%);
 }
 
 .stock-card.alert-deep-red::before {
-    background: #b91c1c;
+    background: #991b1b;
 }
 
 .stock-card.alert-light-red {
-    border-left-color: #fca5a5;
-    background: linear-gradient(to right, rgba(252, 165, 165, 0.12) 0%, white 30%);
+    border-left-color: #fecaca;
+    border-left-width: 6px;
+    background: linear-gradient(to right, rgba(254, 202, 202, 0.08) 0%, white 25%);
 }
 
 .stock-card.alert-light-red::before {
-    background: #fca5a5;
+    background: #fecaca;
 }
 
 .stock-card.alert-yellow {
@@ -243,21 +245,23 @@ h2 {
 }
 
 .stock-card.alert-light-green {
-    border-left-color: #86efac;
-    background: linear-gradient(to right, rgba(134, 239, 172, 0.12) 0%, white 30%);
+    border-left-color: #bbf7d0;
+    border-left-width: 6px;
+    background: linear-gradient(to right, rgba(187, 247, 208, 0.08) 0%, white 25%);
 }
 
 .stock-card.alert-light-green::before {
-    background: #86efac;
+    background: #bbf7d0;
 }
 
 .stock-card.alert-deep-green {
-    border-left-color: #15803d;
-    background: linear-gradient(to right, rgba(21, 128, 61, 0.35) 0%, white 30%);
+    border-left-color: #14532d;
+    border-left-width: 8px;
+    background: linear-gradient(to right, rgba(20, 83, 45, 0.5) 0%, rgba(20, 83, 45, 0.15) 50%, white 70%);
 }
 
 .stock-card.alert-deep-green::before {
-    background: #15803d;
+    background: #14532d;
 }
 
 .stock-card-content {
@@ -352,13 +356,15 @@ h2 {
 }
 
 .alert-badge.deep-red {
-    background: #b91c1c;
+    background: #991b1b;
     color: white;
+    font-weight: 800;
 }
 
 .alert-badge.light-red {
-    background: #fca5a5;
-    color: white;
+    background: #fecaca;
+    color: #7f1d1d;
+    font-weight: 600;
 }
 
 .alert-badge.yellow {
@@ -367,13 +373,15 @@ h2 {
 }
 
 .alert-badge.light-green {
-    background: #86efac;
-    color: white;
+    background: #bbf7d0;
+    color: #14532d;
+    font-weight: 600;
 }
 
 .alert-badge.deep-green {
-    background: #15803d;
+    background: #14532d;
     color: white;
+    font-weight: 800;
 }
 
 .btn-delete {
