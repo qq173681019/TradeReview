@@ -419,28 +419,72 @@ class StockWatchlist {
     }
 
     calculateAlertLevel(currentPrice, sellPrice) {
-        // Calculate percentage difference: negative means price dropped below sell price (loss)
+        // Calculate percentage difference from sell price
         const percentDiff = ((currentPrice - sellPrice) / sellPrice) * 100;
         
-        if (percentDiff >= -1) {
-            // At or slightly below sell price (within 1%) - RED (上涨 - approaching target)
-            return 'rising';
-        } else if (percentDiff >= -8) {
-            // 1-8% below sell price - YELLOW (持平 - neutral)
-            return 'neutral';
+        // Color coding based on percentage change:
+        // -3% to 3%: yellow
+        // 3% to 10%: light red
+        // 10% and above: deep red
+        // -3% to -10%: light green
+        // -10% and below: deep green
+        
+        if (percentDiff >= 10) {
+            return 'deep-red';
+        } else if (percentDiff >= 3) {
+            return 'light-red';
+        } else if (percentDiff >= -3) {
+            return 'yellow';
+        } else if (percentDiff >= -10) {
+            return 'light-green';
         } else {
-            // More than 8% below sell price - GREEN (下跌 - significant decline)
-            return 'falling';
+            return 'deep-green';
         }
     }
 
     getAlertText(level) {
         const texts = {
-            rising: '上涨',
-            neutral: '持平',
-            falling: '下跌'
+            'deep-red': '大涨',
+            'light-red': '上涨',
+            'yellow': '持平',
+            'light-green': '下跌',
+            'deep-green': '大跌'
         };
         return texts[level] || '未知';
+    }
+
+    calculateTimeInterval(addedDate) {
+        // Return null if no addedDate or if it's invalid
+        if (!addedDate) {
+            return null;
+        }
+
+        try {
+            const added = new Date(addedDate);
+            const now = new Date();
+            const diffMs = now - added;
+            
+            // If invalid date, return null
+            if (isNaN(diffMs)) {
+                return null;
+            }
+            
+            const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+            const diffDays = Math.floor(diffHours / 24);
+            
+            // Less than 1 day: show hours
+            if (diffDays < 1) {
+                if (diffHours === 0) {
+                    return '不到1小时';
+                }
+                return `${diffHours}小时`;
+            } else {
+                return `${diffDays}天`;
+            }
+        } catch (error) {
+            console.warn('Error calculating time interval:', error);
+            return null;
+        }
     }
 
     escapeHtml(text) {
@@ -461,6 +505,7 @@ class StockWatchlist {
             const alertLevel = this.calculateAlertLevel(stock.currentPrice, stock.sellPrice);
             const difference = stock.currentPrice - stock.sellPrice;
             const percentDiff = ((difference / stock.sellPrice) * 100).toFixed(2);
+            const timeInterval = this.calculateTimeInterval(stock.addedDate);
             
             return `
                 <div class="stock-card alert-${alertLevel}">
@@ -472,6 +517,7 @@ class StockWatchlist {
                             <div class="stock-info">
                                 <div class="stock-code">${this.escapeHtml(stock.code)}</div>
                                 <div class="stock-name">${this.escapeHtml(stock.name)}</div>
+                                ${timeInterval ? `<div class="time-interval">已添加 ${timeInterval}</div>` : ''}
                             </div>
                         </div>
                         
@@ -512,12 +558,13 @@ class StockWatchlist {
             const percentDiff = ((stock.currentPrice - stock.sellPrice) / stock.sellPrice) * 100;
             const alertLevel = this.calculateAlertLevel(stock.currentPrice, stock.sellPrice);
             
-            // Show popup for stocks with 15% or more loss (dropped significantly below sell price)
-            if (percentDiff <= -15 && this.shouldNotify(stock.id)) {
+            // Show popup for stocks with deep-green (large drop)
+            if (alertLevel === 'deep-green' && this.shouldNotify(stock.id)) {
                 this.showPopupNotification(stock, percentDiff);
             }
             
-            if (alertLevel === 'rising' && this.shouldNotify(stock.id)) {
+            // Show notification for stocks with deep-red (large gain)
+            if (alertLevel === 'deep-red' && this.shouldNotify(stock.id)) {
                 this.showNotification(stock);
             }
         });
