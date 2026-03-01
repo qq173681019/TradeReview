@@ -593,14 +593,210 @@ class StockWatchlist {
     }
 }
 
+// ===== Validation Pool =====
+class ValidationPool {
+    constructor() {
+        this.items = this._load();
+        this.container = null; // set externally after DOM ready
+        this._startAutoCheck();
+    }
+
+    _load() {
+        try { return JSON.parse(localStorage.getItem('validationPool') || '[]'); }
+        catch (e) {
+            console.warn('ValidationPool: failed to parse stored data, starting fresh.', e);
+            return [];
+        }
+    }
+
+    _save() {
+        localStorage.setItem('validationPool', JSON.stringify(this.items));
+    }
+
+    add(entry) {
+        this.items.unshift(entry);
+        this._save();
+        this.render();
+    }
+
+    clear() {
+        if (confirm('确定要清空验证池？')) {
+            this.items = [];
+            this._save();
+            this.render();
+        }
+    }
+
+    _startAutoCheck() {
+        // Run immediately in case there are overdue items
+        this._checkPending();
+        // Then re-check every minute
+        setInterval(() => this._checkPending(), 60 * 1000);
+    }
+
+    async _checkPending() {
+        const now = Date.now();
+        let changed = false;
+        for (const item of this.items) {
+            if (!item.result10min && (now - item.addedAt) >= 10 * 60 * 1000) {
+                const data = await getStockDataShared(item.code).catch(() => null);
+                if (data) {
+                    const actualPct = ((data.price - item.entryPrice) / item.entryPrice) * 100;
+                    // Correctness is judged by direction match (both up or both down)
+                    item.result10min = {
+                        actualPrice: parseFloat(data.price.toFixed(2)),
+                        actualPct:   parseFloat(actualPct.toFixed(2)),
+                        deviation:   parseFloat((actualPct - item.pred10min.pct).toFixed(2)),
+                        correct:     (item.pred10min.pct >= 0) === (actualPct >= 0),
+                        checkedAt:   now
+                    };
+                    changed = true;
+                }
+            }
+            if (!item.result2hr && (now - item.addedAt) >= 2 * 60 * 60 * 1000) {
+                const data = await getStockDataShared(item.code).catch(() => null);
+                if (data) {
+                    const actualPct = ((data.price - item.entryPrice) / item.entryPrice) * 100;
+                    // Correctness is judged by direction match (both up or both down)
+                    item.result2hr = {
+                        actualPrice: parseFloat(data.price.toFixed(2)),
+                        actualPct:   parseFloat(actualPct.toFixed(2)),
+                        deviation:   parseFloat((actualPct - item.pred2hr.pct).toFixed(2)),
+                        correct:     (item.pred2hr.pct >= 0) === (actualPct >= 0),
+                        checkedAt:   now
+                    };
+                    changed = true;
+                }
+            }
+        }
+        if (changed) this._save();
+        // Always re-render to refresh countdowns
+        this.render();
+    }
+
+    _formatCountdown(targetMs) {
+        const remaining = targetMs - Date.now();
+        if (remaining <= 0) return '验证中…';
+        const totalSecs = Math.floor(remaining / 1000);
+        const hrs  = Math.floor(totalSecs / 3600);
+        const mins = Math.floor((totalSecs % 3600) / 60);
+        const secs = totalSecs % 60;
+        if (hrs > 0) return `${hrs}小时${mins}分后验证`;
+        if (mins > 0) return `${mins}分${secs}秒后验证`;
+        return `${secs}秒后验证`;
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = String(text);
+        return div.innerHTML;
+    }
+
+    render() {
+        if (!this.container) return;
+        if (!this.items.length) {
+            this.container.innerHTML = '<p class="empty-message">验证池为空，在趋势分析中添加预测进行验证</p>';
+            return;
+        }
+
+        this.container.innerHTML = this.items.map(item => {
+            const addedDate = new Date(item.addedAt);
+            const timeStr = `${addedDate.getHours().toString().padStart(2, '0')}:${addedDate.getMinutes().toString().padStart(2, '0')}`;
+            const sign10 = item.pred10min.pct >= 0 ? '+' : '';
+            const sign2h = item.pred2hr.pct >= 0 ? '+' : '';
+
+            // 10-minute result/countdown
+            let html10;
+            if (item.result10min) {
+                const r = item.result10min;
+                const devStr = (r.deviation >= 0 ? '+' : '') + r.deviation;
+                html10 = `
+                    <div class="vp-pred-row ${r.correct ? 'vp-correct' : 'vp-incorrect'}">
+                        <span class="vp-pred-label">10分钟</span>
+                        <span class="vp-pred-val">预测 ${sign10}${item.pred10min.pct}%</span>
+                        <span class="vp-arrow">→</span>
+                        <span class="vp-pred-actual">实际 ${r.actualPct >= 0 ? '+' : ''}${r.actualPct}% ¥${r.actualPrice}</span>
+                        <span class="vp-deviation">偏差 ${devStr}%</span>
+                        <span class="vp-badge ${r.correct ? 'vp-badge-correct' : 'vp-badge-wrong'}">${r.correct ? '✓ 方向正确' : '✗ 方向错误'}</span>
+                    </div>`;
+            } else {
+                html10 = `
+                    <div class="vp-pred-row vp-pending">
+                        <span class="vp-pred-label">10分钟</span>
+                        <span class="vp-pred-val">预测 ${sign10}${item.pred10min.pct}%</span>
+                        <span class="vp-arrow">→</span>
+                        <span class="vp-countdown">${this._formatCountdown(item.addedAt + 10 * 60 * 1000)}</span>
+                    </div>`;
+            }
+
+            // 2-hour result/countdown
+            let html2h;
+            if (item.result2hr) {
+                const r = item.result2hr;
+                const devStr = (r.deviation >= 0 ? '+' : '') + r.deviation;
+                html2h = `
+                    <div class="vp-pred-row ${r.correct ? 'vp-correct' : 'vp-incorrect'}">
+                        <span class="vp-pred-label">2小时</span>
+                        <span class="vp-pred-val">预测 ${sign2h}${item.pred2hr.pct}%</span>
+                        <span class="vp-arrow">→</span>
+                        <span class="vp-pred-actual">实际 ${r.actualPct >= 0 ? '+' : ''}${r.actualPct}% ¥${r.actualPrice}</span>
+                        <span class="vp-deviation">偏差 ${devStr}%</span>
+                        <span class="vp-badge ${r.correct ? 'vp-badge-correct' : 'vp-badge-wrong'}">${r.correct ? '✓ 方向正确' : '✗ 方向错误'}</span>
+                    </div>`;
+            } else {
+                html2h = `
+                    <div class="vp-pred-row vp-pending">
+                        <span class="vp-pred-label">2小时</span>
+                        <span class="vp-pred-val">预测 ${sign2h}${item.pred2hr.pct}%</span>
+                        <span class="vp-arrow">→</span>
+                        <span class="vp-countdown">${this._formatCountdown(item.addedAt + 2 * 60 * 60 * 1000)}</span>
+                    </div>`;
+            }
+
+            return `
+                <div class="vp-card">
+                    <div class="vp-card-header">
+                        <span class="vp-code">${this.escapeHtml(item.code)}</span>
+                        <span class="vp-name">${this.escapeHtml(item.name)}</span>
+                        <span class="vp-entry">入场 ¥${item.entryPrice.toFixed(2)}</span>
+                        <span class="vp-time">@${timeStr}</span>
+                        <span class="vp-signal-badge ${this.escapeHtml(item.signal.cssClass)}">${this.escapeHtml(item.signal.label)}</span>
+                        <button class="vp-delete-btn" data-id="${item.id}">✕</button>
+                    </div>
+                    ${html10}
+                    ${html2h}
+                </div>`;
+        }).join('');
+
+        // Bind delete buttons
+        this.container.querySelectorAll('.vp-delete-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const id = parseInt(btn.dataset.id, 10);
+                this.items = this.items.filter(i => i.id !== id);
+                this._save();
+                this.render();
+            });
+        });
+    }
+}
+
 // Initialize the app
 document.addEventListener('DOMContentLoaded', () => {
     const tabManager = new TabManager();
     const watchlist = new StockWatchlist();
     const heatmap = new SectorHeatmap();
+    const validationPool = new ValidationPool();
+    validationPool.container = document.getElementById('validationPoolContainer');
+    validationPool.render();
     const trendAnalyzer = new TrendAnalyzer();
-    // Wire the watchlist reference so TrendAnalyzer can access stocks
+    // Wire references
     trendAnalyzer.watchlist = watchlist;
+    trendAnalyzer.validationPool = validationPool;
+    // Wire clear-pool button
+    const clearPoolBtn = document.getElementById('clearPoolBtn');
+    if (clearPoolBtn) {
+        clearPoolBtn.addEventListener('click', () => validationPool.clear());
+    }
 });
 
 // ===== Tab Manager =====
@@ -637,26 +833,64 @@ class SectorHeatmap {
         // Seed: fixed change values so the heatmap is stable on load,
         // then small random drift is applied on refresh to simulate live data.
         this.sectors = [
+            // ===== 传统金融 =====
             { name: '银行',     baseChange: 0.42,  leaders: ['工商银行', '招商银行'] },
             { name: '非银金融', baseChange: 1.15,  leaders: ['中信证券', '国泰君安'] },
-            { name: '医药生物', baseChange: -0.83, leaders: ['恒瑞医药', '药明康德'] },
-            { name: '电子',     baseChange: 2.31,  leaders: ['韦尔股份', '立讯精密'] },
+            // ===== 消费 =====
             { name: '食品饮料', baseChange: 0.76,  leaders: ['贵州茅台', '五粮液'] },
-            { name: '新能源',   baseChange: 3.47,  leaders: ['宁德时代', '隆基绿能'] },
-            { name: '汽车',     baseChange: 1.89,  leaders: ['比亚迪', '上汽集团'] },
-            { name: '计算机',   baseChange: -1.54, leaders: ['用友网络', '金蝶国际'] },
-            { name: '通信',     baseChange: -0.37, leaders: ['中国电信', '中兴通讯'] },
+            { name: '家用电器', baseChange: 1.25,  leaders: ['美的集团', '格力电器'] },
+            { name: '纺织服装', baseChange: -0.45, leaders: ['申洲国际', '海澜之家'] },
+            { name: '轻工制造', baseChange: 0.33,  leaders: ['顾家家居', '南极电商'] },
+            { name: '商业贸易', baseChange: -0.88, leaders: ['永辉超市', '百联股份'] },
+            { name: '休闲服务', baseChange: 1.42,  leaders: ['中国中免', '宋城演艺'] },
+            { name: '旅游',     baseChange: 1.67,  leaders: ['丽江股份', '黄山旅游'] },
+            { name: '农林牧渔', baseChange: 0.28,  leaders: ['牧原股份', '温氏股份'] },
+            // ===== 医疗健康 =====
+            { name: '医药生物', baseChange: -0.83, leaders: ['恒瑞医药', '药明康德'] },
+            { name: '医疗器械', baseChange: -1.35, leaders: ['迈瑞医疗', '联影医疗'] },
+            { name: '生物技术', baseChange: 1.15,  leaders: ['君实生物', '康希诺'] },
+            { name: '中药',     baseChange: 0.29,  leaders: ['云南白药', '同仁堂'] },
+            // ===== 工业与制造 =====
             { name: '机械设备', baseChange: 0.92,  leaders: ['三一重工', '徐工机械'] },
-            { name: '化工',     baseChange: -2.18, leaders: ['万华化学', '华鲁恒升'] },
-            { name: '房地产',   baseChange: -3.61, leaders: ['保利发展', '万科A'] },
-            { name: '有色金属', baseChange: 1.63,  leaders: ['紫金矿业', '洛阳钼业'] },
+            { name: '电气设备', baseChange: 2.08,  leaders: ['阳光电源', '特变电工'] },
+            { name: '建筑装饰', baseChange: 0.55,  leaders: ['中国建筑', '中国铁建'] },
             { name: '建筑材料', baseChange: -1.02, leaders: ['海螺水泥', '东方雨虹'] },
             { name: '钢铁',     baseChange: -0.55, leaders: ['宝钢股份', '鞍钢股份'] },
-            { name: '农林牧渔', baseChange: 0.28,  leaders: ['牧原股份', '温氏股份'] },
-            { name: '传媒',     baseChange: 0.63,  leaders: ['分众传媒', '芒果超媒'] },
-            { name: '国防军工', baseChange: 2.74,  leaders: ['中航沈飞', '航发动力'] },
-            { name: '交通运输', baseChange: -0.19, leaders: ['中国国航', '招商轮船'] },
+            // ===== 化工原材料 =====
+            { name: '化工',     baseChange: -2.18, leaders: ['万华化学', '华鲁恒升'] },
+            { name: '有色金属', baseChange: 1.63,  leaders: ['紫金矿业', '洛阳钼业'] },
+            { name: '稀土',     baseChange: 2.34,  leaders: ['北方稀土', '盛和资源'] },
+            { name: '煤炭',     baseChange: -0.72, leaders: ['中国神华', '陕西煤业'] },
+            // ===== 新能源 =====
+            { name: '新能源',   baseChange: 3.47,  leaders: ['宁德时代', '隆基绿能'] },
+            { name: '光伏',     baseChange: 3.15,  leaders: ['隆基绿能', '通威股份'] },
+            { name: '储能',     baseChange: 2.67,  leaders: ['亿纬锂能', '派能科技'] },
+            { name: '锂电池',   baseChange: 1.87,  leaders: ['赣锋锂业', '天赐材料'] },
+            { name: '风电',     baseChange: 2.11,  leaders: ['明阳智能', '金风科技'] },
+            { name: '氢能',     baseChange: 3.22,  leaders: ['亿华通', '厚普股份'] },
+            { name: '核电',     baseChange: 0.48,  leaders: ['中国核电', '中广核'] },
+            { name: '公用事业', baseChange: 0.71,  leaders: ['长江电力', '华能国际'] },
+            // ===== 科技 =====
             { name: '半导体',   baseChange: 4.12,  leaders: ['中芯国际', '北方华创'] },
+            { name: '电子',     baseChange: 2.31,  leaders: ['韦尔股份', '立讯精密'] },
+            { name: '消费电子', baseChange: 1.53,  leaders: ['蓝思科技', '歌尔股份'] },
+            { name: '计算机',   baseChange: -1.54, leaders: ['用友网络', '金蝶国际'] },
+            { name: '通信',     baseChange: -0.37, leaders: ['中国电信', '中兴通讯'] },
+            { name: '人工智能', baseChange: 4.56,  leaders: ['科大讯飞', '寒武纪'] },
+            { name: '云计算',   baseChange: 1.89,  leaders: ['浪潮信息', '金山办公'] },
+            { name: '网络安全', baseChange: 0.94,  leaders: ['深信服', '奇安信'] },
+            { name: '数字经济', baseChange: 2.45,  leaders: ['三六零', '中软国际'] },
+            { name: '工业互联', baseChange: 1.05,  leaders: ['汉威科技', '寄云科技'] },
+            { name: '游戏',     baseChange: 1.23,  leaders: ['完美世界', '恺英网络'] },
+            { name: '传媒',     baseChange: 0.63,  leaders: ['分众传媒', '芒果超媒'] },
+            // ===== 周期与其他 =====
+            { name: '汽车',     baseChange: 1.89,  leaders: ['比亚迪', '上汽集团'] },
+            { name: '国防军工', baseChange: 2.74,  leaders: ['中航沈飞', '航发动力'] },
+            { name: '航天航空', baseChange: 1.98,  leaders: ['中航西飞', '航天彩虹'] },
+            { name: '交通运输', baseChange: -0.19, leaders: ['中国国航', '招商轮船'] },
+            { name: '港口航运', baseChange: -0.64, leaders: ['中远海控', '海丰国际'] },
+            { name: '房地产',   baseChange: -3.61, leaders: ['保利发展', '万科A'] },
+            { name: '教育',     baseChange: -1.78, leaders: ['中公教育', '豆神教育'] },
         ];
         this.currentChanges = this.sectors.map(s => s.baseChange);
         this.container = document.getElementById('sectorHeatmap');
@@ -775,6 +1009,62 @@ class TrendAnalyzer {
                 if (e.key === 'Enter') this.runAnalysis();
             });
         }
+        // Event delegation for add-to-pool button rendered inside trendResult
+        if (this.trendResult) {
+            this.trendResult.addEventListener('click', (e) => {
+                if (e.target.closest('#addToPoolBtn')) this._addToPool();
+            });
+        }
+    }
+
+    generatePredictions(currentPrice, rsi, maDiff) {
+        const rsiVal = parseFloat(rsi);
+        const maDiffVal = parseFloat(maDiff);
+        // Small time/price noise so consecutive analyses of the same stock differ slightly
+        const timeNoise  = ((Date.now() / 1000) % 60) / 60 * 0.10 - 0.05; // ±0.05%
+        const priceNoise = ((currentPrice * 100) % 17) / 170 * 0.10 - 0.03; // ±0.03%
+
+        // RSI-driven base momentum: overbought → positive, oversold → negative
+        let base;
+        if      (rsiVal > 70) base =  0.42;
+        else if (rsiVal > 60) base =  0.24;
+        else if (rsiVal > 50) base =  0.09;
+        else if (rsiVal > 40) base = -0.07;
+        else if (rsiVal > 30) base = -0.22;
+        else                  base = -0.40;
+
+        base += maDiffVal * 0.06 + timeNoise + priceNoise;
+
+        const pct10  = parseFloat(base.toFixed(2));
+        // 2-hour window is ~4.2× the 10-minute movement (assumes roughly √18 time scaling)
+        const pct2hr = parseFloat((base * 4.2).toFixed(2));
+        return {
+            pred10min: { pct: pct10,  targetPrice: parseFloat((currentPrice * (1 + pct10  / 100)).toFixed(2)) },
+            pred2hr:   { pct: pct2hr, targetPrice: parseFloat((currentPrice * (1 + pct2hr / 100)).toFixed(2)) }
+        };
+    }
+
+    _addToPool() {
+        if (!this._lastAnalysis || !this.validationPool) return;
+        const { code, name, currentPrice, result, predictions } = this._lastAnalysis;
+        this.validationPool.add({
+            id: Date.now(),
+            code,
+            name,
+            entryPrice: currentPrice,
+            addedAt: Date.now(),
+            pred10min: predictions.pred10min,
+            pred2hr:   predictions.pred2hr,
+            signal:    result.signal,
+            result10min: null,
+            result2hr:   null
+        });
+        const btn = document.getElementById('addToPoolBtn');
+        if (btn) {
+            btn.textContent = '✓ 已添加到验证池';
+            btn.disabled = true;
+            btn.classList.add('btn-added');
+        }
     }
 
     // Simple momentum-based analysis using the current price, sell price, and simulated history
@@ -858,10 +1148,12 @@ class TrendAnalyzer {
         const currentPrice = stockData.price;
         const syntheticSell = currentPrice; // baseline: analyze vs. itself
         const result = this.analyze(currentPrice, syntheticSell, code);
-        this.renderResult(code, stockData.name, currentPrice, result);
+        const predictions = this.generatePredictions(currentPrice, result.rsi, result.maDiff);
+        this._lastAnalysis = { code, name: stockData.name, currentPrice, result, predictions };
+        this.renderResult(code, stockData.name, currentPrice, result, predictions);
     }
 
-    renderResult(code, name, currentPrice, result) {
+    renderResult(code, name, currentPrice, result, predictions) {
         if (!this.trendResult) return;
         const { rsi, maDiff, pctVsTarget, signal } = result;
         const maDiffClass = parseFloat(maDiff) >= 0 ? 'positive' : 'negative';
@@ -879,6 +1171,35 @@ class TrendAnalyzer {
             summaryText = `技术面偏弱，均线呈空头排列趋势，短线下行压力较大。建议减仓或谨慎持有。`;
         } else {
             summaryText = `技术面明显走弱，RSI进入超卖区域，短线抛压较重。建议规避风险，等待企稳信号。`;
+        }
+
+        // Prediction rows (only rendered when predictions provided)
+        let predHtml = '';
+        if (predictions) {
+            const p10 = predictions.pred10min;
+            const p2h = predictions.pred2hr;
+            const cls10  = p10.pct  >= 0 ? 'positive' : 'negative';
+            const cls2h  = p2h.pct  >= 0 ? 'positive' : 'negative';
+            const sign10 = p10.pct  >= 0 ? '+' : '';
+            const sign2h = p2h.pct  >= 0 ? '+' : '';
+            predHtml = `
+                <div class="trend-predictions">
+                    <div class="trend-predictions-title">📊 趋势预测</div>
+                    <div class="trend-pred-row">
+                        <span class="trend-pred-label">10分钟</span>
+                        <span class="trend-pred-val ${cls10}">${sign10}${p10.pct}%</span>
+                        <span class="trend-pred-arrow">→</span>
+                        <span class="trend-pred-target">目标 ¥${p10.targetPrice}</span>
+                    </div>
+                    <div class="trend-pred-row">
+                        <span class="trend-pred-label">2小时</span>
+                        <span class="trend-pred-val ${cls2h}">${sign2h}${p2h.pct}%</span>
+                        <span class="trend-pred-arrow">→</span>
+                        <span class="trend-pred-target">目标 ¥${p2h.targetPrice}</span>
+                    </div>
+                </div>
+                <button class="btn-add-to-pool" id="addToPoolBtn">➕ 添加到验证池</button>
+            `;
         }
 
         this.trendResult.innerHTML = `
@@ -902,6 +1223,7 @@ class TrendAnalyzer {
                 </div>
             </div>
             <div class="trend-summary">${this.escapeHtml(summaryText)}</div>
+            ${predHtml}
         `;
     }
 

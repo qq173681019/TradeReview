@@ -13,7 +13,7 @@
     <div class="container">
         <header>
             <h1>股票分析工具</h1>
-            <p class="subtitle">关注池监控 · 板块热力图 · 短线趋势分析</p>
+            <p class="subtitle">关注池监控 · 板块热力图 · 短线趋势分析 · 预测验证池</p>
         </header>
 
         <!-- Tab Navigation -->
@@ -101,6 +101,17 @@
                     <h3>关注池股票趋势</h3>
                     <div id="trendWatchlist" class="trend-watchlist">
                         <p class="empty-message">关注池为空，请在关注池标签页添加股票</p>
+                    </div>
+                </div>
+
+                <!-- Validation Pool -->
+                <div class="validation-pool-section">
+                    <div class="validation-pool-header">
+                        <h3>验证池</h3>
+                        <button id="clearPoolBtn" class="btn-clear-pool">🗑 清空</button>
+                    </div>
+                    <div id="validationPoolContainer" class="validation-pool-container">
+                        <p class="empty-message">验证池为空，在趋势分析中添加预测进行验证</p>
                     </div>
                 </div>
             </div>
