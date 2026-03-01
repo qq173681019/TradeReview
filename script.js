@@ -849,6 +849,7 @@ class SectorHeatmap {
             { name: '医药生物', baseChange: -0.83, leaders: ['恒瑞医药', '药明康德'] },
             { name: '医疗器械', baseChange: -1.35, leaders: ['迈瑞医疗', '联影医疗'] },
             { name: '生物技术', baseChange: 1.15,  leaders: ['君实生物', '康希诺'] },
+            { name: '创新药',   baseChange: 2.53,  leaders: ['恒瑞医药', '百济神州'] },
             { name: '中药',     baseChange: 0.29,  leaders: ['云南白药', '同仁堂'] },
             // ===== 工业与制造 =====
             { name: '机械设备', baseChange: 0.92,  leaders: ['三一重工', '徐工机械'] },
@@ -872,6 +873,9 @@ class SectorHeatmap {
             { name: '公用事业', baseChange: 0.71,  leaders: ['长江电力', '华能国际'] },
             // ===== 科技 =====
             { name: '半导体',   baseChange: 4.12,  leaders: ['中芯国际', '北方华创'] },
+            { name: 'CPU/GPU',  baseChange: 5.38,  leaders: ['龙芯中科', '景嘉微'] },
+            { name: '存储设备', baseChange: 3.76,  leaders: ['兆易创新', '澜起科技'] },
+            { name: '液冷',     baseChange: 4.25,  leaders: ['英维克', '申菱环境'] },
             { name: '电子',     baseChange: 2.31,  leaders: ['韦尔股份', '立讯精密'] },
             { name: '消费电子', baseChange: 1.53,  leaders: ['蓝思科技', '歌尔股份'] },
             { name: '计算机',   baseChange: -1.54, leaders: ['用友网络', '金蝶国际'] },
@@ -939,8 +943,10 @@ class SectorHeatmap {
 
     render() {
         if (!this.container) return;
-        this.container.innerHTML = this.sectors.map((s, i) => {
-            const change = this.currentChanges[i];
+        // Sort sectors by current change value from largest to smallest
+        const sorted = this.sectors.map((s, i) => ({ s, change: this.currentChanges[i] }))
+            .sort((a, b) => b.change - a.change);
+        this.container.innerHTML = sorted.map(({ s, change }) => {
             const sign = change >= 0 ? '+' : '';
             const heatClass = this.getHeatClass(change);
             const leaders = s.leaders.map(l => this.escapeHtml(l)).join(' · ');
