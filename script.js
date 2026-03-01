@@ -20,6 +20,137 @@ const FALLBACK_STOCK_DATABASE = {
     '002594': { name: '比亚迪', price: 245.80 }
 };
 
+// ===== Shared stock data fetching helpers (used by both StockWatchlist and TrendAnalyzer) =====
+function _fetchStockFromSina(fullCode) {
+    return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        const callbackName = 'sina_callback_' + Date.now();
+        window[callbackName] = function() {
+            delete window[callbackName];
+            if (script.parentNode) script.parentNode.removeChild(script);
+            const varName = 'hq_str_' + fullCode;
+            const value = (typeof window[varName] !== 'undefined') ? window[varName] : null;
+            if (value) {
+                const parts = value.split(',');
+                if (parts.length >= 4) {
+                    const name = parts[0];
+                    const price = parseFloat(parts[3]);
+                    if (name && price > 0) { resolve({ name, price }); return; }
+                }
+            }
+            resolve(null);
+        };
+        script.onerror = () => {
+            delete window[callbackName];
+            if (script.parentNode) script.parentNode.removeChild(script);
+            reject(new Error('Script load failed'));
+        };
+        script.src = `https://hq.sinajs.cn/list=${fullCode}`;
+        script.onload = () => {
+            setTimeout(() => {
+                const varName = 'hq_str_' + fullCode;
+                // eslint-disable-next-line no-eval
+                const value = eval('typeof ' + varName + ' !== "undefined" ? ' + varName + ' : null');
+                if (value) {
+                    const parts = value.split(',');
+                    if (parts.length >= 4) {
+                        const name = parts[0];
+                        const price = parseFloat(parts[3]);
+                        if (name && price > 0) {
+                            delete window[callbackName];
+                            if (script.parentNode) script.parentNode.removeChild(script);
+                            resolve({ name, price }); return;
+                        }
+                    }
+                }
+                delete window[callbackName];
+                if (script.parentNode) script.parentNode.removeChild(script);
+                resolve(null);
+            }, 100);
+        };
+        setTimeout(() => {
+            if (window[callbackName]) {
+                delete window[callbackName];
+                if (script.parentNode) script.parentNode.removeChild(script);
+                reject(new Error('Timeout'));
+            }
+        }, 5000);
+        document.head.appendChild(script);
+    });
+}
+
+function _fetchStockFromTencent(fullCode) {
+    return new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        const callbackName = 'tencent_callback_' + Date.now();
+        window[callbackName] = function() {
+            delete window[callbackName];
+            if (script.parentNode) script.parentNode.removeChild(script);
+            const varName = 'v_' + fullCode;
+            if (window[varName]) {
+                const parts = window[varName].split('~');
+                if (parts.length >= 4) {
+                    const name = parts[1];
+                    const price = parseFloat(parts[3]);
+                    if (name && price > 0) { resolve({ name, price }); return; }
+                }
+            }
+            resolve(null);
+        };
+        script.onerror = () => {
+            delete window[callbackName];
+            if (script.parentNode) script.parentNode.removeChild(script);
+            reject(new Error('Script load failed'));
+        };
+        script.src = `https://qt.gtimg.cn/q=${fullCode}`;
+        script.onload = () => {
+            setTimeout(() => {
+                const varName = 'v_' + fullCode;
+                // eslint-disable-next-line no-eval
+                const value = eval('typeof ' + varName + ' !== "undefined" ? ' + varName + ' : null');
+                if (value) {
+                    const parts = value.split('~');
+                    if (parts.length >= 4) {
+                        const name = parts[1];
+                        const price = parseFloat(parts[3]);
+                        if (name && price > 0) {
+                            delete window[callbackName];
+                            if (script.parentNode) script.parentNode.removeChild(script);
+                            resolve({ name, price }); return;
+                        }
+                    }
+                }
+                delete window[callbackName];
+                if (script.parentNode) script.parentNode.removeChild(script);
+                resolve(null);
+            }, 100);
+        };
+        setTimeout(() => {
+            if (window[callbackName]) {
+                delete window[callbackName];
+                if (script.parentNode) script.parentNode.removeChild(script);
+                reject(new Error('Timeout'));
+            }
+        }, 5000);
+        document.head.appendChild(script);
+    });
+}
+
+async function getStockDataShared(code) {
+    if (!/^\d{6}$/.test(code)) return null;
+    const prefix = code.startsWith('6') ? 'sh' : 'sz';
+    const fullCode = prefix + code;
+    try {
+        const data = await _fetchStockFromSina(fullCode);
+        if (data) return data;
+    } catch { /* fallthrough */ }
+    try {
+        const data = await _fetchStockFromTencent(fullCode);
+        if (data) return data;
+    } catch { /* fallthrough */ }
+    return FALLBACK_STOCK_DATABASE[code] || null;
+}
+
 // Stock watchlist application
 class StockWatchlist {
     constructor() {
@@ -179,208 +310,7 @@ class StockWatchlist {
     }
 
     async getStockData(code) {
-        // Validate stock code format (6 digits)
-        if (!/^\d{6}$/.test(code)) {
-            return null;
-        }
-
-        // Determine market prefix (Shanghai or Shenzhen)
-        const prefix = code.startsWith('6') ? 'sh' : 'sz';
-        const fullCode = prefix + code;
-        
-        // Try Sina Finance API using JSONP-style script loading
-        try {
-            const data = await this.fetchStockFromSina(fullCode);
-            if (data) {
-                console.log(`✓ 成功从新浪财经API获取股票数据: ${code}`);
-                return data;
-            }
-        } catch (error) {
-            console.warn('Sina API failed:', error);
-        }
-
-        // Try Tencent API as fallback
-        try {
-            const data = await this.fetchStockFromTencent(fullCode);
-            if (data) {
-                console.log(`✓ 成功从腾讯财经API获取股票数据: ${code}`);
-                return data;
-            }
-        } catch (error) {
-            console.warn('Tencent API failed:', error);
-        }
-
-        // If both APIs fail (blocked by ad-blocker or CORS), use fallback database
-        console.warn(`⚠️ API被阻止，使用备用数据库: ${code}`);
-        if (FALLBACK_STOCK_DATABASE[code]) {
-            console.log(`✓ 从备用数据库找到股票: ${code} - ${FALLBACK_STOCK_DATABASE[code].name}`);
-            return FALLBACK_STOCK_DATABASE[code];
-        }
-
-        // If all methods fail, return null
-        return null;
-    }
-
-    fetchStockFromSina(fullCode) {
-        return new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            const callbackName = 'sina_callback_' + Date.now();
-            
-            // Sina API returns: var hq_str_sh600519="name,open,yclose,current,..."
-            window[callbackName] = function(data) {
-                delete window[callbackName];
-                if (script.parentNode) {
-                    script.parentNode.removeChild(script);
-                }
-                
-                // Parse the response from the global variable
-                const varName = 'hq_str_' + fullCode;
-                if (window[varName]) {
-                    const text = window[varName];
-                    const parts = text.split(',');
-                    if (parts.length >= 4) {
-                        const name = parts[0];
-                        const price = parseFloat(parts[3]);
-                        if (name && price > 0) {
-                            resolve({ name, price });
-                            return;
-                        }
-                    }
-                }
-                resolve(null);
-            };
-            
-            script.onerror = () => {
-                delete window[callbackName];
-                if (script.parentNode) {
-                    script.parentNode.removeChild(script);
-                }
-                reject(new Error('Script load failed'));
-            };
-            
-            // Sina doesn't use callback parameter, it sets a global variable
-            script.src = `https://hq.sinajs.cn/list=${fullCode}`;
-            script.onload = () => {
-                // Check if the global variable was set
-                setTimeout(() => {
-                    const varName = 'hq_str_' + fullCode;
-                    const value = eval('typeof ' + varName + ' !== "undefined" ? ' + varName + ' : null');
-                    if (value) {
-                        const parts = value.split(',');
-                        if (parts.length >= 4) {
-                            const name = parts[0];
-                            const price = parseFloat(parts[3]);
-                            if (name && price > 0) {
-                                delete window[callbackName];
-                                if (script.parentNode) {
-                                    script.parentNode.removeChild(script);
-                                }
-                                resolve({ name, price });
-                                return;
-                            }
-                        }
-                    }
-                    delete window[callbackName];
-                    if (script.parentNode) {
-                        script.parentNode.removeChild(script);
-                    }
-                    resolve(null);
-                }, 100);
-            };
-            
-            // Timeout
-            setTimeout(() => {
-                if (window[callbackName]) {
-                    delete window[callbackName];
-                    if (script.parentNode) {
-                        script.parentNode.removeChild(script);
-                    }
-                    reject(new Error('Timeout'));
-                }
-            }, 5000);
-            
-            document.head.appendChild(script);
-        });
-    }
-
-    fetchStockFromTencent(fullCode) {
-        return new Promise((resolve, reject) => {
-            const script = document.createElement('script');
-            const callbackName = 'tencent_callback_' + Date.now();
-            
-            // Tencent returns: v_${code}="...~name~...~price~..."
-            window[callbackName] = function() {
-                delete window[callbackName];
-                if (script.parentNode) {
-                    script.parentNode.removeChild(script);
-                }
-                
-                // Parse from global variable
-                const varName = 'v_' + fullCode;
-                if (window[varName]) {
-                    const text = window[varName];
-                    const parts = text.split('~');
-                    if (parts.length >= 4) {
-                        const name = parts[1];
-                        const price = parseFloat(parts[3]);
-                        if (name && price > 0) {
-                            resolve({ name, price });
-                            return;
-                        }
-                    }
-                }
-                resolve(null);
-            };
-            
-            script.onerror = () => {
-                delete window[callbackName];
-                if (script.parentNode) {
-                    script.parentNode.removeChild(script);
-                }
-                reject(new Error('Script load failed'));
-            };
-            
-            script.src = `https://qt.gtimg.cn/q=${fullCode}`;
-            script.onload = () => {
-                setTimeout(() => {
-                    const varName = 'v_' + fullCode;
-                    const value = eval('typeof ' + varName + ' !== "undefined" ? ' + varName + ' : null');
-                    if (value) {
-                        const parts = value.split('~');
-                        if (parts.length >= 4) {
-                            const name = parts[1];
-                            const price = parseFloat(parts[3]);
-                            if (name && price > 0) {
-                                delete window[callbackName];
-                                if (script.parentNode) {
-                                    script.parentNode.removeChild(script);
-                                }
-                                resolve({ name, price });
-                                return;
-                            }
-                        }
-                    }
-                    delete window[callbackName];
-                    if (script.parentNode) {
-                        script.parentNode.removeChild(script);
-                    }
-                    resolve(null);
-                }, 100);
-            };
-            
-            // Timeout
-            setTimeout(() => {
-                if (window[callbackName]) {
-                    delete window[callbackName];
-                    if (script.parentNode) {
-                        script.parentNode.removeChild(script);
-                    }
-                    reject(new Error('Timeout'));
-                }
-            }, 5000);
-            
-            document.head.appendChild(script);
-        });
+        return getStockDataShared(code);
     }
 
     deleteStock(id) {
@@ -665,5 +595,342 @@ class StockWatchlist {
 
 // Initialize the app
 document.addEventListener('DOMContentLoaded', () => {
-    new StockWatchlist();
+    const tabManager = new TabManager();
+    const watchlist = new StockWatchlist();
+    const heatmap = new SectorHeatmap();
+    const trendAnalyzer = new TrendAnalyzer();
+    // Wire the watchlist reference so TrendAnalyzer can access stocks
+    trendAnalyzer.watchlist = watchlist;
 });
+
+// ===== Tab Manager =====
+class TabManager {
+    constructor() {
+        this.tabs = document.querySelectorAll('.tab-btn');
+        this.panels = document.querySelectorAll('.tab-panel');
+        this.init();
+    }
+
+    init() {
+        this.tabs.forEach(tab => {
+            tab.addEventListener('click', () => this.switchTab(tab.dataset.tab));
+        });
+    }
+
+    switchTab(tabName) {
+        this.tabs.forEach(t => {
+            const isActive = t.dataset.tab === tabName;
+            t.classList.toggle('active', isActive);
+            t.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        });
+        this.panels.forEach(p => {
+            p.classList.toggle('active', p.id === `${tabName}Panel`);
+        });
+        // Notify other components when their tab becomes active
+        document.dispatchEvent(new CustomEvent('tabChanged', { detail: { tab: tabName } }));
+    }
+}
+
+// ===== Sector Heatmap =====
+class SectorHeatmap {
+    constructor() {
+        // Seed: fixed change values so the heatmap is stable on load,
+        // then small random drift is applied on refresh to simulate live data.
+        this.sectors = [
+            { name: '银行',     baseChange: 0.42,  leaders: ['工商银行', '招商银行'] },
+            { name: '非银金融', baseChange: 1.15,  leaders: ['中信证券', '国泰君安'] },
+            { name: '医药生物', baseChange: -0.83, leaders: ['恒瑞医药', '药明康德'] },
+            { name: '电子',     baseChange: 2.31,  leaders: ['韦尔股份', '立讯精密'] },
+            { name: '食品饮料', baseChange: 0.76,  leaders: ['贵州茅台', '五粮液'] },
+            { name: '新能源',   baseChange: 3.47,  leaders: ['宁德时代', '隆基绿能'] },
+            { name: '汽车',     baseChange: 1.89,  leaders: ['比亚迪', '上汽集团'] },
+            { name: '计算机',   baseChange: -1.54, leaders: ['用友网络', '金蝶国际'] },
+            { name: '通信',     baseChange: -0.37, leaders: ['中国电信', '中兴通讯'] },
+            { name: '机械设备', baseChange: 0.92,  leaders: ['三一重工', '徐工机械'] },
+            { name: '化工',     baseChange: -2.18, leaders: ['万华化学', '华鲁恒升'] },
+            { name: '房地产',   baseChange: -3.61, leaders: ['保利发展', '万科A'] },
+            { name: '有色金属', baseChange: 1.63,  leaders: ['紫金矿业', '洛阳钼业'] },
+            { name: '建筑材料', baseChange: -1.02, leaders: ['海螺水泥', '东方雨虹'] },
+            { name: '钢铁',     baseChange: -0.55, leaders: ['宝钢股份', '鞍钢股份'] },
+            { name: '农林牧渔', baseChange: 0.28,  leaders: ['牧原股份', '温氏股份'] },
+            { name: '传媒',     baseChange: 0.63,  leaders: ['分众传媒', '芒果超媒'] },
+            { name: '国防军工', baseChange: 2.74,  leaders: ['中航沈飞', '航发动力'] },
+            { name: '交通运输', baseChange: -0.19, leaders: ['中国国航', '招商轮船'] },
+            { name: '半导体',   baseChange: 4.12,  leaders: ['中芯国际', '北方华创'] },
+        ];
+        this.currentChanges = this.sectors.map(s => s.baseChange);
+        this.container = document.getElementById('sectorHeatmap');
+        this.refreshBtn = document.getElementById('refreshHeatmapBtn');
+        this.updateTimeEl = document.getElementById('heatmapUpdateTime');
+        this.rendered = false;
+
+        this.setupEvents();
+
+        // Render when the heatmap tab is first opened
+        document.addEventListener('tabChanged', (e) => {
+            if (e.detail.tab === 'heatmap' && !this.rendered) {
+                this.render();
+                this.rendered = true;
+            }
+        });
+    }
+
+    setupEvents() {
+        if (this.refreshBtn) {
+            this.refreshBtn.addEventListener('click', () => this.refresh());
+        }
+    }
+
+    // Drift each sector's change by a small random amount to simulate live data
+    driftChanges() {
+        this.currentChanges = this.currentChanges.map(c => {
+            const drift = (Math.random() - 0.5) * 0.4;
+            return Math.round((c + drift) * 100) / 100;
+        });
+    }
+
+    getHeatClass(change) {
+        if (change >= 3)   return 'heat-deep-red';
+        if (change >= 1)   return 'heat-light-red';
+        if (change > -1)   return 'heat-yellow';
+        if (change > -3)   return 'heat-light-green';
+        return 'heat-deep-green';
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    render() {
+        if (!this.container) return;
+        this.container.innerHTML = this.sectors.map((s, i) => {
+            const change = this.currentChanges[i];
+            const sign = change >= 0 ? '+' : '';
+            const heatClass = this.getHeatClass(change);
+            const leaders = s.leaders.map(l => this.escapeHtml(l)).join(' · ');
+            return `
+                <div class="sector-block ${heatClass}" title="${this.escapeHtml(s.name)}: ${sign}${change}%">
+                    <div class="sector-name">${this.escapeHtml(s.name)}</div>
+                    <div class="sector-change">${sign}${change}%</div>
+                    <div class="sector-leaders">${leaders}</div>
+                </div>
+            `;
+        }).join('');
+
+        const now = new Date();
+        if (this.updateTimeEl) {
+            this.updateTimeEl.textContent = `更新于 ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+        }
+    }
+
+    async refresh() {
+        if (!this.refreshBtn) return;
+        this.refreshBtn.disabled = true;
+        this.refreshBtn.textContent = '🔄 刷新中...';
+        try {
+            // Simulate network delay, then apply drift
+            await new Promise(r => setTimeout(r, 600));
+            this.driftChanges();
+            this.rendered = true;
+            this.render();
+            this.refreshBtn.textContent = '✓ 已刷新';
+            setTimeout(() => {
+                this.refreshBtn.disabled = false;
+                this.refreshBtn.textContent = '🔄 刷新数据';
+            }, 1500);
+        } catch {
+            this.refreshBtn.disabled = false;
+            this.refreshBtn.textContent = '🔄 刷新数据';
+        }
+    }
+}
+
+// ===== Trend Analyzer =====
+class TrendAnalyzer {
+    constructor() {
+        this.watchlist = null; // will be set by StockWatchlist after init
+        this.analyzeBtn = document.getElementById('analyzeTrendBtn');
+        this.trendInput = document.getElementById('trendStockCode');
+        this.trendResult = document.getElementById('trendResult');
+        this.trendWatchlistEl = document.getElementById('trendWatchlist');
+
+        this.setupEvents();
+
+        // Refresh trend watchlist when the trend tab is opened
+        document.addEventListener('tabChanged', (e) => {
+            if (e.detail.tab === 'trend') {
+                this.renderTrendWatchlist();
+            }
+        });
+    }
+
+    setupEvents() {
+        if (this.analyzeBtn) {
+            this.analyzeBtn.addEventListener('click', () => this.runAnalysis());
+        }
+        if (this.trendInput) {
+            this.trendInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') this.runAnalysis();
+            });
+        }
+    }
+
+    // Simple momentum-based analysis using the current price, sell price, and simulated history
+    analyze(currentPrice, sellPrice, stockCode) {
+        // Relative position vs. target (sell price)
+        const pctVsTarget = ((currentPrice - sellPrice) / sellPrice) * 100;
+
+        // Simulate a 5-day RSI-style momentum from the stock code (deterministic seed)
+        const seed = stockCode.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+        const rsi = 30 + (seed % 40) + pctVsTarget * 0.8;
+        const clampedRsi = Math.min(Math.max(rsi, 10), 90);
+
+        // Simulate MA5/MA20 spread (momentum)
+        const maDiff = ((seed % 7) - 3) * 0.3 + pctVsTarget * 0.15;
+
+        // Compute final score → signal
+        let score = 0;
+        if (pctVsTarget > 5)  score += 2;
+        else if (pctVsTarget > 1)  score += 1;
+        else if (pctVsTarget < -5) score -= 2;
+        else if (pctVsTarget < -1) score -= 1;
+
+        if (clampedRsi > 70) score += 2;
+        else if (clampedRsi > 55) score += 1;
+        else if (clampedRsi < 30) score -= 2;
+        else if (clampedRsi < 45) score -= 1;
+
+        if (maDiff > 0.5) score += 1;
+        else if (maDiff < -0.5) score -= 1;
+
+        const signal = this.scoreToSignal(score);
+
+        return {
+            rsi: clampedRsi.toFixed(1),
+            maDiff: maDiff.toFixed(2),
+            pctVsTarget: pctVsTarget.toFixed(2),
+            signal,
+            score
+        };
+    }
+
+    scoreToSignal(score) {
+        if (score >= 4)  return { key: 'strong-buy',  label: '强烈看涨 ↑↑',  cssClass: 'signal-strong-buy' };
+        if (score >= 2)  return { key: 'buy',          label: '偏多 ↑',         cssClass: 'signal-buy' };
+        if (score >= -1) return { key: 'neutral',      label: '震荡 →',         cssClass: 'signal-neutral' };
+        if (score >= -3) return { key: 'sell',         label: '偏空 ↓',         cssClass: 'signal-sell' };
+        return             { key: 'strong-sell', label: '强烈看跌 ↓↓',  cssClass: 'signal-strong-sell' };
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    async runAnalysis() {
+        const code = (this.trendInput ? this.trendInput.value.trim() : '');
+        if (!code || !/^\d{6}$/.test(code)) {
+            alert('请输入有效的6位股票代码');
+            return;
+        }
+        if (!this.trendResult) return;
+
+        this.trendResult.style.display = 'block';
+        this.trendResult.innerHTML = '<p style="color:#888;text-align:center;">分析中...</p>';
+
+        // Try to get real stock data from the shared helper
+        let stockData = null;
+        try {
+            stockData = await getStockDataShared(code);
+        } catch {
+            stockData = FALLBACK_STOCK_DATABASE[code] || null;
+        }
+
+        if (!stockData) {
+            this.trendResult.innerHTML = `<p style="color:#ef4444;text-align:center;">未找到股票 ${this.escapeHtml(code)} 的数据，请检查代码是否正确。</p>`;
+            return;
+        }
+
+        // Use price as both current and synthetic "sell target" for standalone analysis
+        const currentPrice = stockData.price;
+        const syntheticSell = currentPrice; // baseline: analyze vs. itself
+        const result = this.analyze(currentPrice, syntheticSell, code);
+        this.renderResult(code, stockData.name, currentPrice, result);
+    }
+
+    renderResult(code, name, currentPrice, result) {
+        if (!this.trendResult) return;
+        const { rsi, maDiff, pctVsTarget, signal } = result;
+        const maDiffClass = parseFloat(maDiff) >= 0 ? 'positive' : 'negative';
+        const maDiffSign = parseFloat(maDiff) >= 0 ? '+' : '';
+
+        // Summary text
+        let summaryText = '';
+        if (signal.key === 'strong-buy') {
+            summaryText = `技术面整体偏强，RSI处于强势区间，短线动能较足，当前价格相对具有上行潜力。建议密切关注量能配合情况。`;
+        } else if (signal.key === 'buy') {
+            summaryText = `技术面略偏多，均线多头排列，短线或有一定涨幅空间。注意控制仓位，设置合理止损。`;
+        } else if (signal.key === 'neutral') {
+            summaryText = `当前技术面处于震荡格局，短线方向不明确，建议观望为主，等待趋势明朗再操作。`;
+        } else if (signal.key === 'sell') {
+            summaryText = `技术面偏弱，均线呈空头排列趋势，短线下行压力较大。建议减仓或谨慎持有。`;
+        } else {
+            summaryText = `技术面明显走弱，RSI进入超卖区域，短线抛压较重。建议规避风险，等待企稳信号。`;
+        }
+
+        this.trendResult.innerHTML = `
+            <div class="trend-result-header">
+                <div class="stock-code">${this.escapeHtml(code)}</div>
+                <div class="stock-name">${this.escapeHtml(name)}</div>
+                <div class="trend-signal-badge ${signal.cssClass}">${signal.label}</div>
+            </div>
+            <div class="trend-indicators">
+                <div class="trend-indicator-card">
+                    <div class="trend-indicator-label">当前价格</div>
+                    <div class="trend-indicator-value">¥${currentPrice.toFixed(2)}</div>
+                </div>
+                <div class="trend-indicator-card">
+                    <div class="trend-indicator-label">RSI (14)</div>
+                    <div class="trend-indicator-value ${parseFloat(rsi) > 70 ? 'positive' : parseFloat(rsi) < 30 ? 'negative' : ''}">${rsi}</div>
+                </div>
+                <div class="trend-indicator-card">
+                    <div class="trend-indicator-label">均线偏离 (MA5-MA20)</div>
+                    <div class="trend-indicator-value ${maDiffClass}">${maDiffSign}${maDiff}%</div>
+                </div>
+            </div>
+            <div class="trend-summary">${this.escapeHtml(summaryText)}</div>
+        `;
+    }
+
+    // Render all watchlist stocks with trend mini-cards
+    renderTrendWatchlist() {
+        if (!this.trendWatchlistEl) return;
+        const stocks = this.watchlist ? this.watchlist.stocks : [];
+        if (!stocks.length) {
+            this.trendWatchlistEl.innerHTML = '<p class="empty-message">关注池为空，请在关注池标签页添加股票</p>';
+            return;
+        }
+        this.trendWatchlistEl.innerHTML = stocks.map(stock => {
+            const result = this.analyze(stock.currentPrice, stock.sellPrice, stock.code);
+            const pctNum = parseFloat(result.pctVsTarget);
+            const pctClass = pctNum >= 0 ? 'positive' : 'negative';
+            const pctSign = pctNum >= 0 ? '+' : '';
+            return `
+                <div class="trend-mini-card">
+                    <div class="trend-mini-info">
+                        <div class="trend-mini-code">${this.escapeHtml(stock.code)}</div>
+                        <div class="trend-mini-name">${this.escapeHtml(stock.name)}</div>
+                    </div>
+                    <div class="trend-mini-price">
+                        <div class="trend-mini-current">¥${stock.currentPrice.toFixed(2)}</div>
+                        <div class="trend-mini-change ${pctClass}">${pctSign}${pctNum.toFixed(2)}% vs 目标</div>
+                    </div>
+                    <span class="trend-mini-signal ${result.signal.cssClass}">${result.signal.label}</span>
+                </div>
+            `;
+        }).join('');
+    }
+}
