@@ -4,6 +4,360 @@
     box-sizing: border-box;
 }
 
+/* ===== Tab Navigation ===== */
+.tab-nav {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 24px;
+    background: rgba(255, 255, 255, 0.15);
+    padding: 6px;
+    border-radius: 12px;
+}
+
+.tab-btn {
+    flex: 1;
+    padding: 12px 16px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.85);
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    touch-action: manipulation;
+    min-height: 44px;
+}
+
+.tab-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+}
+
+.tab-btn.active {
+    background: white;
+    color: #667eea;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.tab-panel {
+    display: none;
+}
+
+.tab-panel.active {
+    display: block;
+}
+
+/* ===== Sector Heatmap ===== */
+.heatmap-section {
+    background: white;
+    border-radius: 12px;
+    padding: 30px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+}
+
+.heatmap-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.heatmap-header h2 {
+    margin-bottom: 0;
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.heatmap-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.update-time {
+    font-size: 0.8em;
+    color: #999;
+    white-space: nowrap;
+}
+
+.heatmap-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 20px;
+}
+
+.legend-item {
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.75em;
+    font-weight: 600;
+    color: white;
+}
+
+.legend-deep-red  { background: #b91c1c; }
+.legend-light-red { background: #ef4444; }
+.legend-yellow    { background: #ca8a04; }
+.legend-light-green { background: #16a34a; }
+.legend-deep-green  { background: #14532d; }
+
+.sector-heatmap {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 10px;
+}
+
+.sector-block {
+    border-radius: 10px;
+    padding: 16px 12px;
+    text-align: center;
+    cursor: default;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    color: white;
+}
+
+.sector-block:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
+}
+
+.sector-block.heat-deep-red    { background: #b91c1c; }
+.sector-block.heat-light-red   { background: #ef4444; }
+.sector-block.heat-yellow      { background: #ca8a04; }
+.sector-block.heat-light-green { background: #16a34a; }
+.sector-block.heat-deep-green  { background: #14532d; }
+
+.sector-name {
+    font-size: 0.9em;
+    font-weight: 700;
+    margin-bottom: 8px;
+    line-height: 1.2;
+}
+
+.sector-change {
+    font-size: 1.15em;
+    font-weight: 800;
+}
+
+.sector-leaders {
+    font-size: 0.7em;
+    opacity: 0.85;
+    margin-top: 6px;
+    line-height: 1.3;
+}
+
+.heatmap-disclaimer {
+    margin-top: 14px;
+    font-size: 0.78em;
+    color: #bbb;
+    text-align: center;
+}
+
+/* ===== Trend Analysis ===== */
+.trend-section {
+    background: white;
+    border-radius: 12px;
+    padding: 30px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+}
+
+.trend-header h2 {
+    margin-bottom: 20px;
+}
+
+.trend-search {
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+    margin-bottom: 24px;
+}
+
+.btn-analyze {
+    padding: 12px 20px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 1em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+    min-height: 44px;
+    touch-action: manipulation;
+}
+
+.btn-analyze:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.trend-result {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.06) 0%, rgba(118, 75, 162, 0.06) 100%);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 24px;
+    border: 2px solid rgba(102, 126, 234, 0.2);
+}
+
+.trend-result-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.trend-result-header .stock-code {
+    font-size: 1.3em;
+    font-weight: 700;
+    color: #333;
+}
+
+.trend-result-header .stock-name {
+    font-size: 1em;
+    color: #666;
+}
+
+.trend-signal-badge {
+    margin-left: auto;
+    padding: 6px 16px;
+    border-radius: 20px;
+    font-size: 0.85em;
+    font-weight: 700;
+    color: white;
+}
+
+.signal-strong-buy  { background: #b91c1c; }
+.signal-buy         { background: #ef4444; }
+.signal-neutral     { background: #ca8a04; }
+.signal-sell        { background: #16a34a; }
+.signal-strong-sell { background: #14532d; }
+
+.trend-indicators {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.trend-indicator-card {
+    background: white;
+    border-radius: 8px;
+    padding: 12px;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.07);
+    text-align: center;
+}
+
+.trend-indicator-label {
+    font-size: 0.75em;
+    color: #888;
+    margin-bottom: 4px;
+    font-weight: 600;
+}
+
+.trend-indicator-value {
+    font-size: 1.05em;
+    font-weight: 700;
+    color: #333;
+}
+
+.trend-indicator-value.positive { color: #b91c1c; }
+.trend-indicator-value.negative { color: #15803d; }
+
+.trend-summary {
+    font-size: 0.9em;
+    color: #555;
+    line-height: 1.6;
+    padding: 12px;
+    background: white;
+    border-radius: 8px;
+    border-left: 4px solid #667eea;
+}
+
+.trend-watchlist-section {
+    border-top: 2px solid #f0f0f0;
+    padding-top: 20px;
+}
+
+.trend-watchlist-section h3 {
+    color: #667eea;
+    margin-bottom: 14px;
+    font-size: 1.1em;
+    font-weight: 600;
+}
+
+.trend-watchlist {
+    display: grid;
+    gap: 10px;
+}
+
+.trend-mini-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    background: #fafafa;
+    border-radius: 8px;
+    padding: 12px 16px;
+    border: 1px solid #e8e8e8;
+    transition: border-color 0.2s;
+}
+
+.trend-mini-card:hover {
+    border-color: #667eea;
+}
+
+.trend-mini-info {
+    flex: 1;
+}
+
+.trend-mini-code {
+    font-weight: 700;
+    font-size: 0.95em;
+    color: #333;
+}
+
+.trend-mini-name {
+    font-size: 0.8em;
+    color: #888;
+    margin-top: 2px;
+}
+
+.trend-mini-price {
+    text-align: right;
+}
+
+.trend-mini-current {
+    font-size: 1em;
+    font-weight: 700;
+    color: #667eea;
+}
+
+.trend-mini-change {
+    font-size: 0.8em;
+    font-weight: 600;
+    margin-top: 2px;
+}
+
+.trend-mini-change.positive { color: #b91c1c; }
+.trend-mini-change.negative { color: #15803d; }
+
+.trend-mini-signal {
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 0.75em;
+    font-weight: 700;
+    color: white;
+    white-space: nowrap;
+}
+
+/* Mini signal badge colors (same as stock alert levels) */
+.trend-mini-signal.signal-strong-buy  { background: #b91c1c; }
+.trend-mini-signal.signal-buy         { background: #ef4444; }
+.trend-mini-signal.signal-neutral     { background: #ca8a04; }
+.trend-mini-signal.signal-sell        { background: #16a34a; }
+.trend-mini-signal.signal-strong-sell { background: #14532d; }
+
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -593,5 +947,59 @@ h2 {
 
     .stock-header {
         margin-bottom: 8px;
+    }
+}
+
+/* ===== Responsive: New features ===== */
+@media (max-width: 768px) {
+    .tab-btn {
+        font-size: 0.8em;
+        padding: 10px 8px;
+    }
+
+    .heatmap-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+
+    .heatmap-controls {
+        width: 100%;
+    }
+
+    .heatmap-controls .btn-refresh-all {
+        width: 100%;
+    }
+
+    .sector-heatmap {
+        grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+        gap: 8px;
+    }
+
+    .sector-block {
+        padding: 12px 8px;
+    }
+
+    .trend-search {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .btn-analyze {
+        width: 100%;
+    }
+
+    .trend-indicators {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .heatmap-section,
+    .trend-section {
+        padding: 15px;
+    }
+
+    .trend-mini-card {
+        flex-wrap: wrap;
+        gap: 10px;
     }
 }
