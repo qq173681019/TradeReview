@@ -20,6 +20,66 @@ const FALLBACK_STOCK_DATABASE = {
     '002594': { name: '比亚迪', price: 245.80 }
 };
 
+// ===== A-Share Trading Hours Guard =====
+// Official hours: Mon-Fri 09:30-11:30, 13:00-15:00, excluding public holidays.
+const TRADING_HOLIDAYS = new Set([
+    // 2025
+    '2025-01-01','2025-01-28','2025-01-29','2025-01-30','2025-01-31',
+    '2025-02-03','2025-02-04',
+    '2025-04-04','2025-04-07',
+    '2025-05-01','2025-05-02','2025-05-05',
+    '2025-05-31','2025-06-02',
+    '2025-10-01','2025-10-02','2025-10-03','2025-10-06','2025-10-07','2025-10-08',
+    // 2026
+    '2026-01-01','2026-01-02',
+    '2026-02-17','2026-02-18','2026-02-19','2026-02-20','2026-02-23','2026-02-24',
+    '2026-04-06',
+    '2026-05-01','2026-05-04','2026-05-05',
+    '2026-06-19',
+    '2026-09-25',
+    '2026-10-01','2026-10-02','2026-10-05','2026-10-06','2026-10-07','2026-10-08',
+]);
+
+function _dateKey(d = new Date()) {
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function isTradingTime(d = new Date()) {
+    const day = d.getDay();
+    if (day === 0 || day === 6) return false;            // weekend
+    if (TRADING_HOLIDAYS.has(_dateKey(d))) return false; // public holiday
+    const t = d.getHours() * 60 + d.getMinutes();
+    return (t >= 570 && t < 690) ||  // 09:30 – 11:30
+           (t >= 780 && t < 900);    // 13:00 – 15:00
+}
+
+/** Human-readable reason why market is closed right now (null if open) */
+function tradingClosedReason(d = new Date()) {
+    const day = d.getDay();
+    if (day === 0 || day === 6) return '周末，A股不交易';
+    if (TRADING_HOLIDAYS.has(_dateKey(d))) return '公假日，A股不交易';
+    const t = d.getHours() * 60 + d.getMinutes();
+    if (t < 570)             return '早盘未开，09:30 开始';
+    if (t >= 570 && t < 690) return null; // trading
+    if (t < 780)             return '午休时间，13:00 开始';
+    if (t >= 780 && t < 900) return null; // trading
+    return '已收盘，明日 09:30 开始';
+}
+
+/** Ms until next session open */
+function msUntilNextOpen(d = new Date()) {
+    const t    = d.getHours() * 60 + d.getMinutes();
+    const secs = d.getSeconds();
+    const ms   = d.getMilliseconds();
+    const day  = d.getDay();
+    const isWeekday = day >= 1 && day <= 5 && !TRADING_HOLIDAYS.has(_dateKey(d));
+    if (isWeekday && t < 570) return (570 - t) * 60000 - secs * 1000 - ms; // until 09:30
+    if (isWeekday && t >= 690 && t < 780) return (780 - t) * 60000 - secs * 1000 - ms; // until 13:00
+    // After close or weekend/holiday: poll every 60 s (will re-evaluate next open day)
+    const remaining = (60 - secs) * 1000 - ms;
+    return Math.max(remaining, 30000);
+}
+
 // ===== Shared stock data fetching helpers (used by both StockWatchlist and TrendAnalyzer) =====
 function _fetchStockFromSina(fullCode) {
     return new Promise((resolve, reject) => {
@@ -635,6 +695,11 @@ class ValidationPool {
     }
 
     async _checkPending() {
+        // Skip price-fetching outside trading hours — prices won't change anyway
+        if (!isTradingTime()) {
+            this.render(); // still refresh countdowns
+            return;
+        }
         const now = Date.now();
         let changed = false;
         for (const item of this.items) {
@@ -651,6 +716,10 @@ class ValidationPool {
                         checkedAt:   now
                     };
                     changed = true;
+                    // Feed into adaptive model
+                    if (predictionModel) predictionModel.learn(item);
+                    // Notify continuous validator
+                    if (continuousValidator) continuousValidator.onItemVerified(item);
                 }
             }
             if (!item.result2hr && (now - item.addedAt) >= 2 * 60 * 60 * 1000) {
@@ -669,7 +738,11 @@ class ValidationPool {
                 }
             }
         }
-        if (changed) this._save();
+        if (changed) {
+            this._save();
+            // Notify model status panel to re-render
+            document.dispatchEvent(new CustomEvent('modelUpdated'));
+        }
         // Always re-render to refresh countdowns
         this.render();
     }
@@ -781,7 +854,13 @@ class ValidationPool {
 }
 
 // Initialize the app
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    predictionModel = new PredictionModel();
+    // Try silent auto-load from previously linked file (no permission prompt needed if still granted)
+    const loadResult = await ModelFileManager.autoLoad().catch(() => 'error');
+    if (loadResult === 'loaded') {
+        console.log('[Model] Auto-loaded from linked file.');
+    }
     const tabManager = new TabManager();
     const watchlist = new StockWatchlist();
     const heatmap = new SectorHeatmap();
@@ -792,6 +871,12 @@ document.addEventListener('DOMContentLoaded', () => {
     // Wire references
     trendAnalyzer.watchlist = watchlist;
     trendAnalyzer.validationPool = validationPool;
+    // Init continuous validator
+    continuousValidator = new ContinuousValidator(watchlist, validationPool, trendAnalyzer);
+    document.getElementById('cvToggleBtn')?.addEventListener('click', () => {
+        if (continuousValidator.running) continuousValidator.stop();
+        else continuousValidator.start();
+    });
     // Wire clear-pool button
     const clearPoolBtn = document.getElementById('clearPoolBtn');
     if (clearPoolBtn) {
@@ -988,6 +1073,494 @@ class SectorHeatmap {
 }
 
 // ===== Trend Analyzer =====
+// ===== Adaptive Prediction Model =====
+// Learns from 10-min ValidationPool outcomes via online gradient descent.
+// Weights are persisted in localStorage so they survive page refreshes.
+let predictionModel = null;
+let continuousValidator = null;
+
+class PredictionModel {
+    static STORAGE_KEY = 'predModel_v2';
+    // RSI buckets matching generatePredictions thresholds (checked top-down)
+    static BUCKET_DEFS = [
+        { id: 'rsi70', label: 'RSI > 70',  minRsi: 70, base:  0.42 },
+        { id: 'rsi60', label: 'RSI 60-70', minRsi: 60, base:  0.24 },
+        { id: 'rsi50', label: 'RSI 50-60', minRsi: 50, base:  0.09 },
+        { id: 'rsi40', label: 'RSI 40-50', minRsi: 40, base: -0.07 },
+        { id: 'rsi30', label: 'RSI 30-40', minRsi: 30, base: -0.22 },
+        { id: 'rsi0',  label: 'RSI < 30',  minRsi:  0, base: -0.40 },
+    ];
+
+    constructor() { this._load(); }
+
+    _defaults() {
+        return {
+            version: 2,
+            buckets: PredictionModel.BUCKET_DEFS.map(d => ({ ...d, count: 0, correctCount: 0 })),
+            maDiffMult:   0.06,
+            totalSamples: 0,
+            generation:   0,
+        };
+    }
+
+    _load() {
+        try {
+            const raw = localStorage.getItem(PredictionModel.STORAGE_KEY);
+            if (raw) {
+                const p = JSON.parse(raw);
+                if (p && p.version === 2) { Object.assign(this, p); return; }
+            }
+        } catch (e) { /* ignore */ }
+        Object.assign(this, this._defaults());
+    }
+
+    _save() {
+        localStorage.setItem(PredictionModel.STORAGE_KEY, JSON.stringify({
+            version:      this.version,
+            buckets:      this.buckets,
+            maDiffMult:   this.maDiffMult,
+            totalSamples: this.totalSamples,
+            generation:   this.generation,
+        }));
+    }
+
+    _getBucket(rsiVal) {
+        const v = parseFloat(rsiVal);
+        for (const b of this.buckets) { if (v >= b.minRsi) return b; }
+        return this.buckets[this.buckets.length - 1];
+    }
+
+    getBase(rsiVal) { return this._getBucket(rsiVal).base; }
+
+    /**
+     * Online gradient-descent step driven by a completed 10-min validation.
+     * item must have: rsi, maDiff (stored at prediction time) and result10min.actualPct.
+     * Marks result10min.learnedAt so this item is never trained on twice.
+     */
+    learn(item) {
+        if (!item.result10min || item.result10min.learnedAt) return;
+        const rsi    = parseFloat(item.rsi);
+        const maDiff = parseFloat(item.maDiff);
+        const actual = item.result10min.actualPct;
+        if (isNaN(rsi) || isNaN(maDiff) || isNaN(actual)) return;
+
+        const bucket = this._getBucket(rsi);
+        bucket.count++;
+        if (item.result10min.correct) bucket.correctCount++;
+
+        // Adaptive learning rate: starts at 0.15, decays gently, floors at 0.02
+        const lr = Math.max(0.02, 0.15 / (1 + this.totalSamples * 0.05));
+
+        // Residual between what was predicted and what actually happened
+        const predicted = bucket.base + maDiff * this.maDiffMult;
+        const error     = actual - predicted;
+
+        // Gradient step for bucket base
+        bucket.base = parseFloat(
+            Math.max(-3.0, Math.min(3.0, bucket.base + lr * error)).toFixed(4)
+        );
+
+        // Gradient step for maDiff multiplier (skip near-zero maDiff — noisy gradient)
+        if (Math.abs(maDiff) > 0.05) {
+            this.maDiffMult = parseFloat(
+                Math.max(-0.8, Math.min(0.8, this.maDiffMult + lr * error * maDiff)).toFixed(4)
+            );
+        }
+
+        this.totalSamples++;
+        this.generation++;
+        item.result10min.learnedAt = Date.now(); // prevent double-training
+        this._save();
+    }
+
+    /** Aggregate 10-min direction accuracy across all buckets */
+    accuracy() {
+        const total   = this.buckets.reduce((s, b) => s + b.count, 0);
+        const correct = this.buckets.reduce((s, b) => s + b.correctCount, 0);
+        if (!total) return null;
+        return { correct, total, pct: ((correct / total) * 100).toFixed(1) };
+    }
+
+    reset() {
+        Object.assign(this, this._defaults());
+        this._save();
+    }
+
+    // ── Serialisation helpers ──────────────────────────────────────────────
+    _toJSONText() {
+        return JSON.stringify({
+            _note: 'TradeReview 自适应预测模型权重',
+            exportedAt:   new Date().toISOString(),
+            version:      this.version,
+            totalSamples: this.totalSamples,
+            generation:   this.generation,
+            maDiffMult:   this.maDiffMult,
+            buckets:      this.buckets,
+        }, null, 2);
+    }
+
+    _applyFromText(text) {
+        const p = JSON.parse(text);
+        if (!p || p.version !== 2 || !Array.isArray(p.buckets) || p.buckets.length !== 6)
+            throw new Error('文件格式不兼容，请使用本工具导出的权重文件');
+        this.version      = p.version;
+        this.totalSamples = p.totalSamples || 0;
+        this.generation   = p.generation   || 0;
+        this.maDiffMult   = p.maDiffMult   ?? 0.06;
+        this.buckets = PredictionModel.BUCKET_DEFS.map((def, i) => ({
+            ...def,
+            base:         p.buckets[i]?.base         ?? def.base,
+            count:        p.buckets[i]?.count        ?? 0,
+            correctCount: p.buckets[i]?.correctCount ?? 0,
+        }));
+        this._save();
+        return { samples: this.totalSamples, generation: this.generation };
+    }
+
+    /** Fallback blob-download (used when File System Access API unavailable) */
+    exportWeights() {
+        const blob = new Blob([this._toJSONText()], { type: 'application/json' });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href = url;
+        a.download = 'trade_model.json';
+        document.body.appendChild(a); a.click();
+        document.body.removeChild(a); URL.revokeObjectURL(url);
+    }
+
+    /** Fallback import from <input type=file> (used when FSA unavailable) */
+    importWeights(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload  = (e) => { try { resolve(this._applyFromText(e.target.result)); } catch (err) { reject(err); } };
+            reader.onerror = () => reject(new Error('文件读取失败'));
+            reader.readAsText(file);
+        });
+    }
+}
+
+// ===== ModelFileManager — File System Access API persistence =====
+class ModelFileManager {
+    static DB_NAME   = 'TradeReviewDB';
+    static STORE     = 'fileHandles';
+    static KEY       = 'modelFileHandle';
+    static supported = typeof window !== 'undefined' && 'showSaveFilePicker' in window;
+
+    static async _db() {
+        return new Promise((res, rej) => {
+            const r = indexedDB.open(ModelFileManager.DB_NAME, 1);
+            r.onupgradeneeded = (e) => e.target.result.createObjectStore(ModelFileManager.STORE);
+            r.onsuccess = (e) => res(e.target.result);
+            r.onerror   = (e) => rej(e.target.error);
+        });
+    }
+
+    static async _saveHandle(handle) {
+        const db = await ModelFileManager._db();
+        return new Promise((res, rej) => {
+            const tx = db.transaction(ModelFileManager.STORE, 'readwrite');
+            tx.objectStore(ModelFileManager.STORE).put(handle, ModelFileManager.KEY);
+            tx.oncomplete = res; tx.onerror = (e) => rej(e.target.error);
+        });
+    }
+
+    static async _getHandle() {
+        const db = await ModelFileManager._db();
+        return new Promise((res, rej) => {
+            const tx = db.transaction(ModelFileManager.STORE, 'readonly');
+            const rq = tx.objectStore(ModelFileManager.STORE).get(ModelFileManager.KEY);
+            rq.onsuccess = (e) => res(e.target.result || null);
+            rq.onerror   = (e) => rej(e.target.error);
+        });
+    }
+
+    /** Returns 'granted' | 'prompt' | 'denied' | 'none' */
+    static async checkPermission() {
+        if (!ModelFileManager.supported) return 'none';
+        try {
+            const handle = await ModelFileManager._getHandle();
+            if (!handle) return 'none';
+            return await handle.queryPermission({ mode: 'readwrite' });
+        } catch { return 'none'; }
+    }
+
+    /**
+     * Try to silently auto-load the model from the saved file handle.
+     * Returns 'loaded' | 'needs-permission' | 'none' | 'error'
+     */
+    static async autoLoad() {
+        if (!ModelFileManager.supported) return 'none';
+        try {
+            const handle = await ModelFileManager._getHandle();
+            if (!handle) return 'none';
+            const perm = await handle.queryPermission({ mode: 'readwrite' });
+            if (perm === 'granted') {
+                const file = await handle.getFile();
+                predictionModel._applyFromText(await file.text());
+                return 'loaded';
+            }
+            return perm === 'denied' ? 'none' : 'needs-permission';
+        } catch { return 'error'; }
+    }
+
+    /** Called by a user gesture — requests permission then loads. */
+    static async requestAndLoad() {
+        const handle = await ModelFileManager._getHandle();
+        if (!handle) return false;
+        const perm = await handle.requestPermission({ mode: 'readwrite' });
+        if (perm !== 'granted') return false;
+        const file = await handle.getFile();
+        predictionModel._applyFromText(await file.text());
+        return true;
+    }
+
+    static _getProjectDir() {
+        try {
+            const href = window.location.href;
+            if (!href.startsWith('file:///')) return null;
+            const decoded = decodeURIComponent(href).replace('file:///', '');
+            return decoded.replace(/\/[^\/]*$/, '').replace(/\//g, '\\');
+        } catch { return null; }
+    }
+
+    /**
+     * Export & overwrite using stored handle.
+     * First call opens Save dialog; subsequent calls are silent.
+     */
+    static async save() {
+        if (!ModelFileManager.supported) {
+            predictionModel.exportWeights(); // blob fallback
+            return '(下载)';
+        }
+        let handle = await ModelFileManager._getHandle().catch(() => null);
+        // Verify permission
+        if (handle) {
+            const perm = await handle.queryPermission({ mode: 'readwrite' }).catch(() => 'none');
+            if (perm === 'prompt') {
+                const req = await handle.requestPermission({ mode: 'readwrite' }).catch(() => 'denied');
+                if (req !== 'granted') handle = null;
+            } else if (perm !== 'granted') {
+                handle = null;
+            }
+        }
+        // First time: open Save picker
+        if (!handle) {
+            handle = await window.showSaveFilePicker({
+                suggestedName: 'trade_model.json',
+                types: [{ description: 'JSON 权重文件', accept: { 'application/json': ['.json'] } }],
+            });
+            await ModelFileManager._saveHandle(handle);
+        }
+        const writable = await handle.createWritable();
+        await writable.write(predictionModel._toJSONText());
+        await writable.close();
+        return handle.name;
+    }
+}
+
+// ===== ContinuousValidator =====
+// Runs repeated 10-min prediction rounds on all watchlist stocks until
+// ≥80% of them reach ≥95% directional accuracy. Auto-saves weights on goal.
+class ContinuousValidator {
+    static TARGET_STOCK_ACCURACY = 0.95; // per-stock minimum accuracy
+    static TARGET_STOCK_RATIO    = 0.80; // fraction of stocks that must qualify
+    static INTER_ROUND_DELAY_MS  = 3000; // 3s gap between rounds
+
+    constructor(watchlist, validationPool, trendAnalyzer) {
+        this.watchlist      = watchlist;
+        this.validationPool = validationPool;
+        this.trendAnalyzer  = trendAnalyzer;
+        this.running        = false;
+        this.round          = 0;
+        this.roundItemIds   = new Set();
+        this.stockStats     = {}; // code → { correct, total }
+        this._timer         = null;
+        this._waitTimer     = null; // used while waiting for market to open
+    }
+
+    start() {
+        if (this.running) return;
+        if (!this.validationPool?.items.length) {
+            alert('验证池为空，请先在趨势分析中分析股票并添加到验证池');
+            return;
+        }
+        this.running    = true;
+        this.round      = 0;
+        this.stockStats = {};
+        this.roundItemIds.clear();
+        this._updateUI();
+        this._startRound();
+    }
+
+    stop() {
+        this.running = false;
+        if (this._timer)     { clearTimeout(this._timer);     this._timer     = null; }
+        if (this._waitTimer) { clearTimeout(this._waitTimer); this._waitTimer = null; }
+        this.roundItemIds.clear();
+        this._updateUI();
+    }
+
+    /** If market is closed, show a waiting message and re-try when it opens */
+    _waitForMarketOpen(msgPrefix = '') {
+        if (this._waitTimer) { clearTimeout(this._waitTimer); this._waitTimer = null; }
+        const reason = tradingClosedReason();
+        const delay  = msUntilNextOpen();
+        const mins   = Math.ceil(delay / 60000);
+        const eta    = mins >= 60
+            ? `${Math.floor(mins / 60)}小时${mins % 60}分钟`
+            : `${mins}分钟`;
+        const label  = msgPrefix
+            ? `${msgPrefix}　⏸ ${reason}，${eta}后自动继续`
+            : `⏸ ${reason}，${eta}后自动继续`;
+        this._updateUI(label);
+        this._waitTimer = setTimeout(() => {
+            this._waitTimer = null;
+            if (!this.running) return;
+            if (isTradingTime()) {
+                this._startRound();
+            } else {
+                this._waitForMarketOpen(msgPrefix);
+            }
+        }, delay);
+    }
+
+    async _startRound() {
+        if (!this.running) return;
+
+        // Block if outside trading hours
+        if (!isTradingTime()) {
+            this._waitForMarketOpen(
+                this.round > 0 ? `第 ${this.round} 轮已完成` : ''
+            );
+            return;
+        }
+
+        this.round++;
+        this.roundItemIds.clear();
+
+        // Derive unique stocks from whatever is currently in the validation pool
+        const seen   = new Set();
+        const stocks = [];
+        for (const item of this.validationPool.items) {
+            if (!seen.has(item.code)) {
+                seen.add(item.code);
+                stocks.push({ code: item.code, name: item.name });
+            }
+        }
+        if (!stocks.length) { this.stop(); return; }
+
+        for (const stock of stocks) {
+            const stockData = await getStockDataShared(stock.code).catch(() => null);
+            // Fall back to last known price from pool if API fails
+            const fallback  = this.validationPool.items.find(i => i.code === stock.code);
+            const price     = stockData?.price || fallback?.entryPrice || 0;
+            if (!price) continue;
+            const result = this.trendAnalyzer.analyze(price, price, stock.code);
+            const preds  = this.trendAnalyzer.generatePredictions(price, result.rsi, result.maDiff);
+            const entry  = {
+                id:          Date.now() + Math.random(),
+                code:        stock.code,
+                name:        stock.name,
+                entryPrice:  price,
+                addedAt:     Date.now(),
+                pred10min:   preds.pred10min,
+                pred2hr:     preds.pred2hr,
+                signal:      result.signal,
+                rsi:         result.rsi,
+                maDiff:      result.maDiff,
+                _cvRound:    this.round,
+                result10min: null,
+                result2hr:   null,
+            };
+            this.validationPool.items.unshift(entry);
+            this.roundItemIds.add(entry.id);
+        }
+        this.validationPool._save();
+        this.validationPool.render();
+        this._updateUI(`第 ${this.round} 轮 · 对 ${stocks.length} 只股票生成预测，10 分钟后自动验证…`);
+    }
+
+    /** Called by ValidationPool._checkPending after a 10-min result is stored */
+    onItemVerified(item) {
+        if (!this.running || !this.roundItemIds.has(item.id)) return;
+        if (!this.stockStats[item.code]) this.stockStats[item.code] = { correct: 0, total: 0 };
+        const s = this.stockStats[item.code];
+        s.total++;
+        if (item.result10min.correct) s.correct++;
+        // Check whether every item in this round now has a 10-min result
+        const allDone = [...this.roundItemIds].every(id => {
+            const f = this.validationPool.items.find(i => i.id === id);
+            return f && f.result10min !== null;
+        });
+        if (allDone) this._evaluateAndContinue();
+    }
+
+    async _evaluateAndContinue() {
+        const codes     = Object.keys(this.stockStats);
+        const qualified = codes.filter(c => {
+            const s = this.stockStats[c];
+            return s.total > 0 && s.correct / s.total >= ContinuousValidator.TARGET_STOCK_ACCURACY;
+        });
+        const ratio  = codes.length ? qualified.length / codes.length : 0;
+        const pctStr = (ratio * 100).toFixed(0);
+
+        // ── Always save updated weights to JSON after every round ──────────
+        let savedTag = '';
+        try {
+            const fname = await ModelFileManager.save();
+            savedTag = ` · 💾 权重已保存(${fname}, 第${predictionModel.generation}代)`;
+        } catch {
+            // If no file linked yet, at least localStorage is already up to date
+            savedTag = ` · 💾 权重已写入本地缓存(第${predictionModel.generation}代)`;
+        }
+        // Notify model status panel to refresh
+        document.dispatchEvent(new CustomEvent('modelUpdated'));
+
+        if (ratio >= ContinuousValidator.TARGET_STOCK_RATIO) {
+            this.running = false;
+            this._updateUI(
+                `🎉 目标达成！${qualified.length}/${codes.length} 只股票准确率 ≥ 95%（共 ${this.round} 轮）${savedTag}`, true);
+            this._toast(`🎉 持续验证完成！${pctStr}% 的股票达到 ≥ 95% 准确率，共 ${this.round} 轮`);
+        } else {
+            this._updateUI(`第 ${this.round} 轮完成 · ${qualified.length}/${codes.length} 只达标(${pctStr}%)${savedTag}`);
+            if (isTradingTime()) {
+                this._timer = setTimeout(() => this._startRound(), ContinuousValidator.INTER_ROUND_DELAY_MS);
+            } else {
+                this._waitForMarketOpen(`第 ${this.round} 轮完成 ${savedTag}`);
+            }
+        }
+    }
+
+    _updateUI(msg = '', success = false) {
+        const btn = document.getElementById('cvToggleBtn');
+        if (btn) {
+            btn.textContent = this.running ? '⏹ 停止验证' : '▶ 开启持续验证';
+            btn.className   = this.running ? 'btn-cv-stop' : 'btn-cv-start';
+        }
+        const bar = document.getElementById('cvStatusBar');
+        if (!bar) return;
+        const codes = Object.keys(this.stockStats);
+        if (!msg && !codes.length) { bar.style.display = 'none'; return; }
+        bar.style.display = 'block';
+        bar.className     = 'cv-status-bar' + (success ? ' cv-success' : '');
+        const tagsHtml = codes.length
+            ? `<div class="cv-stat-row">${codes.map(c => {
+                const s   = this.stockStats[c];
+                const pct = s.total ? ((s.correct / s.total) * 100).toFixed(0) : '—';
+                const ok  = s.total && s.correct / s.total >= ContinuousValidator.TARGET_STOCK_ACCURACY;
+                return `<span class="${ok ? 'cv-tag-good' : 'cv-tag-bad'}">${c}: ${pct}% (${s.correct}/${s.total})</span>`;
+            }).join('')}</div>`
+            : '';
+        bar.innerHTML = msg ? `<div class="cv-msg">${msg}</div>${tagsHtml}` : tagsHtml;
+    }
+
+    _toast(msg) {
+        const t = Object.assign(document.createElement('div'), { className: 'ms-toast', textContent: msg });
+        document.body.appendChild(t);
+        setTimeout(() => t.remove(), 6000);
+    }
+}
+
 class TrendAnalyzer {
     constructor() {
         this.watchlist = null; // will be set by StockWatchlist after init
@@ -1002,8 +1575,10 @@ class TrendAnalyzer {
         document.addEventListener('tabChanged', (e) => {
             if (e.detail.tab === 'trend') {
                 this.renderTrendWatchlist();
+                this.renderModelStatus();
             }
         });
+        document.addEventListener('modelUpdated', () => this.renderModelStatus());
     }
 
     setupEvents() {
@@ -1030,16 +1605,22 @@ class TrendAnalyzer {
         const timeNoise  = ((Date.now() / 1000) % 60) / 60 * 0.10 - 0.05; // ±0.05%
         const priceNoise = ((currentPrice * 100) % 17) / 170 * 0.10 - 0.03; // ±0.03%
 
-        // RSI-driven base momentum: overbought → positive, oversold → negative
-        let base;
-        if      (rsiVal > 70) base =  0.42;
-        else if (rsiVal > 60) base =  0.24;
-        else if (rsiVal > 50) base =  0.09;
-        else if (rsiVal > 40) base = -0.07;
-        else if (rsiVal > 30) base = -0.22;
-        else                  base = -0.40;
+        // RSI-driven base momentum: use learned model weights when available, else factory defaults
+        let base, maMult;
+        if (predictionModel) {
+            base   = predictionModel.getBase(rsiVal);
+            maMult = predictionModel.maDiffMult;
+        } else {
+            if      (rsiVal > 70) base =  0.42;
+            else if (rsiVal > 60) base =  0.24;
+            else if (rsiVal > 50) base =  0.09;
+            else if (rsiVal > 40) base = -0.07;
+            else if (rsiVal > 30) base = -0.22;
+            else                  base = -0.40;
+            maMult = 0.06;
+        }
 
-        base += maDiffVal * 0.06 + timeNoise + priceNoise;
+        base += maDiffVal * maMult + timeNoise + priceNoise;
 
         const pct10  = parseFloat(base.toFixed(2));
         // 2-hour window is ~4.2× the 10-minute movement (assumes roughly √18 time scaling)
@@ -1062,6 +1643,8 @@ class TrendAnalyzer {
             pred10min: predictions.pred10min,
             pred2hr:   predictions.pred2hr,
             signal:    result.signal,
+            rsi:       result.rsi,
+            maDiff:    result.maDiff,
             result10min: null,
             result2hr:   null
         });
@@ -1157,6 +1740,123 @@ class TrendAnalyzer {
         const predictions = this.generatePredictions(currentPrice, result.rsi, result.maDiff);
         this._lastAnalysis = { code, name: stockData.name, currentPrice, result, predictions };
         this.renderResult(code, stockData.name, currentPrice, result, predictions);
+        this.renderModelStatus();
+    }
+
+    async renderModelStatus() {
+        const el = document.getElementById('modelStatusPanel');
+        if (!el || !predictionModel) return;
+        const acc = predictionModel.accuracy();
+        const accStr = acc
+            ? `<span class="${parseFloat(acc.pct) >= 55 ? 'ms-acc-good' : 'ms-acc-low'}">${acc.pct}%</span> <span class="ms-acc-sub">(${acc.correct}/${acc.total})</span>`
+            : '<span class="ms-acc-sub">暂无数据 — 添加预测到验证池后自动收集</span>';
+        const maSign = predictionModel.maDiffMult >= 0 ? '+' : '';
+        const bucketRows = predictionModel.buckets.map(b => {
+            const bPct = b.count > 0 ? ((b.correctCount / b.count) * 100).toFixed(0) + '%' : '—';
+            const bPctCls = b.count > 0 ? (b.correctCount / b.count >= 0.5 ? 'ms-good' : 'ms-bad') : '';
+            const bBase = (b.base >= 0 ? '+' : '') + b.base + '%';
+            const bCls = b.base >= 0 ? 'ms-good' : 'ms-bad';
+            return `<tr>
+                <td>${b.label}</td>
+                <td class="${bCls}">${bBase}</td>
+                <td>${b.count}</td>
+                <td class="${bPctCls}">${bPct}</td>
+            </tr>`;
+        }).join('');
+        const learnStatus = predictionModel.totalSamples === 0 ? '⏳ 等待数据'
+            : predictionModel.totalSamples < 5  ? '📈 初始积累期'
+            : predictionModel.totalSamples < 20 ? '🔄 快速学习期'
+            : '✅ 持续优化中';
+
+        // File linkage status
+        const filePerm    = await ModelFileManager.checkPermission();
+        const projectDir  = ModelFileManager._getProjectDir();
+        const pathHintHtml = projectDir
+            ? `<div class="ms-path-hint">📂 首次导出时请导航到：<code>${projectDir}</code></div>`
+            : '';
+        let fileStatusHtml = '';
+        let importBtnHtml  = '';
+        if (!ModelFileManager.supported) {
+            fileStatusHtml = '<span class="ms-file-tag ms-file-none">⚠️ 浏览器不支持文件 API（请用 Chrome/Edge）</span>';
+            importBtnHtml  = `<label class="ms-import-label" title="从文件恢复学习进度">⬆ 导入<input type="file" id="importModelInput" accept=".json" style="display:none"></label>`;
+        } else if (filePerm === 'none') {
+            fileStatusHtml = '<span class="ms-file-tag ms-file-none">💾 未关联文件（点导出后自动关联）</span>';
+        } else if (filePerm === 'prompt') {
+            fileStatusHtml = '<span class="ms-file-tag ms-file-prompt">🔐 文件已关联，需授权</span>';
+            importBtnHtml  = `<button class="ms-restore-btn" id="restoreModelBtn">🔗 从关联文件恢复</button>`;
+        } else if (filePerm === 'granted') {
+            fileStatusHtml = '<span class="ms-file-tag ms-file-ok">🟢 文件已关联，导出直接覆盖</span>';
+        }
+
+        el.innerHTML = `
+            <div class="ms-header">
+                <span class="ms-title">🧠 自适应预测模型</span>
+                <span class="ms-meta">第 ${predictionModel.generation} 代 · ${predictionModel.totalSamples} 个样本</span>
+                <button class="ms-export-btn" id="exportModelBtn" title="导出并覆盖权重文件">⬇ 导出</button>
+                ${importBtnHtml}
+                <button class="ms-reset-btn" id="resetModelBtn" title="重置所有学习权重到初始值">↺ 重置</button>
+            </div>
+            <div class="ms-file-status">${fileStatusHtml}${pathHintHtml}</div>
+            <div class="ms-stats-row">
+                <div class="ms-stat">
+                    <div class="ms-stat-label">10分钟方向准确率</div>
+                    <div class="ms-stat-val">${accStr}</div>
+                </div>
+                <div class="ms-stat">
+                    <div class="ms-stat-label">maDiff 权重</div>
+                    <div class="ms-stat-val ${predictionModel.maDiffMult >= 0 ? 'ms-good' : 'ms-bad'}">${maSign}${predictionModel.maDiffMult}</div>
+                </div>
+                <div class="ms-stat">
+                    <div class="ms-stat-label">学习状态</div>
+                    <div class="ms-stat-val">${learnStatus}</div>
+                </div>
+            </div>
+            <details class="ms-details">
+                <summary>RSI 区间权重详情 ▸</summary>
+                <table class="ms-table">
+                    <thead><tr><th>RSI 区间</th><th>当前基准</th><th>样本数</th><th>准确率</th></tr></thead>
+                    <tbody>${bucketRows}</tbody>
+                </table>
+            </details>
+        `;
+        document.getElementById('resetModelBtn')?.addEventListener('click', () => {
+            if (confirm('确认重置模型？所有学习进度将丢失，预测权重恢复为初始值。')) {
+                predictionModel.reset();
+                this.renderModelStatus();
+            }
+        });
+        document.getElementById('exportModelBtn')?.addEventListener('click', async () => {
+            try {
+                const name = await ModelFileManager.save();
+                this.renderModelStatus();
+                const msg = name === '(下载)' ? '已下载 trade_model.json' : `已保存到 ${name}`;
+                // Brief toast instead of alert
+                const toast = document.createElement('div');
+                toast.className = 'ms-toast';
+                toast.textContent = '✅ ' + msg;
+                document.body.appendChild(toast);
+                setTimeout(() => toast.remove(), 2500);
+            } catch (err) {
+                if (err.name !== 'AbortError') alert(`导出失败：${err.message}`);
+            }
+        });
+        document.getElementById('restoreModelBtn')?.addEventListener('click', async () => {
+            try {
+                const ok = await ModelFileManager.requestAndLoad();
+                if (ok) { this.renderModelStatus(); }
+                else { alert('授权失败，无法读取文件。'); }
+            } catch (err) { alert(`恢复失败：${err.message}`); }
+        });
+        document.getElementById('importModelInput')?.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            try {
+                const info = await predictionModel.importWeights(file);
+                this.renderModelStatus();
+                alert(`✅ 导入成功！已恢复 ${info.samples} 个样本、第 ${info.generation} 代的学习进度。`);
+            } catch (err) { alert(`❌ 导入失败：${err.message}`); }
+            e.target.value = '';
+        });
     }
 
     renderResult(code, name, currentPrice, result, predictions) {

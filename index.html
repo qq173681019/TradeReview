@@ -97,6 +97,12 @@
                 <div id="trendResult" class="trend-result" style="display: none;" aria-live="polite">
                     <!-- Trend analysis results rendered by JS -->
                 </div>
+
+                <!-- Adaptive Model Status Panel -->
+                <div class="model-status-panel" id="modelStatusPanel">
+                    <p class="ms-loading">🧠 模型加载中...</p>
+                </div>
+
                 <div class="trend-watchlist-section">
                     <h3>关注池股票趋势</h3>
                     <div id="trendWatchlist" class="trend-watchlist">
@@ -108,8 +114,10 @@
                 <div class="validation-pool-section">
                     <div class="validation-pool-header">
                         <h3>验证池</h3>
+                        <button id="cvToggleBtn" class="btn-cv-start">▶ 开启持续验证</button>
                         <button id="clearPoolBtn" class="btn-clear-pool">🗑 清空</button>
                     </div>
+                    <div id="cvStatusBar" class="cv-status-bar" style="display:none;"></div>
                     <div id="validationPoolContainer" class="validation-pool-container">
                         <p class="empty-message">验证池为空，在趋势分析中添加预测进行验证</p>
                     </div>
