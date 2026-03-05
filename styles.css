@@ -1339,6 +1339,25 @@ h2 {
     transition: background 0.2s;
 }
 .ms-export-btn:hover { background: #dbeafe; }
+.ms-patch-btn {
+    background: #faf5ff;
+    border: 1px solid #d8b4fe;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 0.78em;
+    color: #7c3aed;
+    cursor: pointer;
+    font-weight: 600;
+    transition: background 0.2s;
+}
+.ms-patch-btn:hover { background: #ede9fe; }
+.ms-patch-btn.ms-patch-linked {
+    background: #f3e8ff;
+    border-color: #a855f7;
+    color: #6b21a8;
+    font-weight: 700;
+}
+.ms-patch-btn.ms-patch-linked:hover { background: #e9d5ff; }
 .ms-import-label {
     background: #f0fdf4;
     border: 1px solid #bbf7d0;

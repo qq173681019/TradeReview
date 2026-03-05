@@ -93,9 +93,22 @@ function _fetchStockFromSina(fullCode) {
             if (value) {
                 const parts = value.split(',');
                 if (parts.length >= 4) {
-                    const name = parts[0];
-                    const price = parseFloat(parts[3]);
-                    if (name && price > 0) { resolve({ name, price }); return; }
+                    const name      = parts[0];
+                    const open      = parseFloat(parts[1]), prevClose = parseFloat(parts[2]);
+                    const price     = parseFloat(parts[3]), high      = parseFloat(parts[4]);
+                    const low       = parseFloat(parts[5]), volume    = parseFloat(parts[8]);
+                    const amount    = parseFloat(parts[9]);
+                    if (name && price > 0) {
+                        resolve({ name, price,
+                            open:      isNaN(open)      || open <= 0      ? price : open,
+                            prevClose: isNaN(prevClose) || prevClose <= 0 ? price : prevClose,
+                            high:      isNaN(high)      || high < price   ? price : high,
+                            low:       isNaN(low)       || low <= 0       ? price : low,
+                            volume:    isNaN(volume)    ? 0 : volume,
+                            amount:    isNaN(amount)    ? 0 : amount,
+                        });
+                        return;
+                    }
                 }
             }
             resolve(null);
@@ -114,12 +127,23 @@ function _fetchStockFromSina(fullCode) {
                 if (value) {
                     const parts = value.split(',');
                     if (parts.length >= 4) {
-                        const name = parts[0];
-                        const price = parseFloat(parts[3]);
+                        const name      = parts[0];
+                        const open      = parseFloat(parts[1]), prevClose = parseFloat(parts[2]);
+                        const price     = parseFloat(parts[3]), high      = parseFloat(parts[4]);
+                        const low       = parseFloat(parts[5]), volume    = parseFloat(parts[8]);
+                        const amount    = parseFloat(parts[9]);
                         if (name && price > 0) {
                             delete window[callbackName];
                             if (script.parentNode) script.parentNode.removeChild(script);
-                            resolve({ name, price }); return;
+                            resolve({ name, price,
+                                open:      isNaN(open)      || open <= 0      ? price : open,
+                                prevClose: isNaN(prevClose) || prevClose <= 0 ? price : prevClose,
+                                high:      isNaN(high)      || high < price   ? price : high,
+                                low:       isNaN(low)       || low <= 0       ? price : low,
+                                volume:    isNaN(volume)    ? 0 : volume,
+                                amount:    isNaN(amount)    ? 0 : amount,
+                            });
+                            return;
                         }
                     }
                 }
@@ -1081,46 +1105,86 @@ let continuousValidator = null;
 
 class PredictionModel {
     static STORAGE_KEY = 'predModel_v2';
+
+    // [WEIGHTS:START] ── 每日由 update_model.bat 自动更新，勿手动编辑此区块 ──
+    static HARDCODED_WEIGHTS = {
+        exportedAt:       '2026-03-05T08:18:36.690Z',
+        version:           2,
+        totalSamples:      133,
+        generation:        133,
+        maDiffMult:       -0.1036,
+        intraDayPosMult:   0.0,   // intraday stochastic [-1,+1] learnable weight
+        openStrengthMult:  0.0,   // (current-open)/open*100 learnable weight
+        todMult:           0.0,   // time-of-day seasonality learnable weight
+        buckets: [
+            { id: 'rsi70', label: 'RSI > 70', minRsi: 70, base:     0.42,   count: 0, correctCount: 0 },
+            { id: 'rsi60', label: 'RSI 60-70', minRsi: 60, base:    0.084,   count: 50, correctCount: 9 },
+            { id: 'rsi50', label: 'RSI 50-60', minRsi: 50, base:  -0.0193,   count: 31, correctCount: 17 },
+            { id: 'rsi40', label: 'RSI 40-50', minRsi: 40, base:    0.058,   count: 50, correctCount: 18 },
+            { id: 'rsi30', label: 'RSI 30-40', minRsi: 30, base:  -0.2319,   count: 2, correctCount: 2 },
+            { id: 'rsi0', label: 'RSI < 30', minRsi: 0, base:     -0.4,   count: 0, correctCount: 0 },
+        ],
+    };
+    // [WEIGHTS:END]
+
     // RSI buckets matching generatePredictions thresholds (checked top-down)
     static BUCKET_DEFS = [
-        { id: 'rsi70', label: 'RSI > 70',  minRsi: 70, base:  0.42 },
-        { id: 'rsi60', label: 'RSI 60-70', minRsi: 60, base:  0.24 },
-        { id: 'rsi50', label: 'RSI 50-60', minRsi: 50, base:  0.09 },
-        { id: 'rsi40', label: 'RSI 40-50', minRsi: 40, base: -0.07 },
-        { id: 'rsi30', label: 'RSI 30-40', minRsi: 30, base: -0.22 },
-        { id: 'rsi0',  label: 'RSI < 30',  minRsi:  0, base: -0.40 },
+        { id: 'rsi70', label: 'RSI > 70',  minRsi: 70, base:  0.42    },
+        { id: 'rsi60', label: 'RSI 60-70', minRsi: 60, base:  0.084   },
+        { id: 'rsi50', label: 'RSI 50-60', minRsi: 50, base: -0.0193  },
+        { id: 'rsi40', label: 'RSI 40-50', minRsi: 40, base:  0.058   },
+        { id: 'rsi30', label: 'RSI 30-40', minRsi: 30, base: -0.2319  },
+        { id: 'rsi0',  label: 'RSI < 30',  minRsi:  0, base: -0.40    },
     ];
 
     constructor() { this._load(); }
 
     _defaults() {
+        const hw = PredictionModel.HARDCODED_WEIGHTS;
         return {
-            version: 2,
-            buckets: PredictionModel.BUCKET_DEFS.map(d => ({ ...d, count: 0, correctCount: 0 })),
-            maDiffMult:   0.06,
-            totalSamples: 0,
-            generation:   0,
+            version:          hw.version,
+            buckets:          hw.buckets.map(b => ({ ...b })),
+            maDiffMult:       hw.maDiffMult,
+            intraDayPosMult:  hw.intraDayPosMult,
+            openStrengthMult: hw.openStrengthMult,
+            todMult:          hw.todMult,
+            totalSamples:     hw.totalSamples,
+            generation:       hw.generation,
         };
     }
 
     _load() {
+        const hw = PredictionModel.HARDCODED_WEIGHTS;
         try {
             const raw = localStorage.getItem(PredictionModel.STORAGE_KEY);
             if (raw) {
                 const p = JSON.parse(raw);
-                if (p && p.version === 2) { Object.assign(this, p); return; }
+                // Prefer localStorage only when it has strictly newer training than the hardcoded export
+                if (p && p.version === 2 && (p.generation || 0) > hw.generation) {
+                    Object.assign(this, p);
+                    // Back-fill new fields that older saves won't have
+                    if (this.intraDayPosMult  == null) this.intraDayPosMult  = 0.0;
+                    if (this.openStrengthMult == null) this.openStrengthMult = 0.0;
+                    if (this.todMult          == null) this.todMult          = 0.0;
+                    return;
+                }
             }
         } catch (e) { /* ignore */ }
+        // Use hardcoded weights (fresher or equal generation beats stale localStorage)
         Object.assign(this, this._defaults());
+        this._save();
     }
 
     _save() {
         localStorage.setItem(PredictionModel.STORAGE_KEY, JSON.stringify({
-            version:      this.version,
-            buckets:      this.buckets,
-            maDiffMult:   this.maDiffMult,
-            totalSamples: this.totalSamples,
-            generation:   this.generation,
+            version:          this.version,
+            buckets:          this.buckets,
+            maDiffMult:       this.maDiffMult,
+            intraDayPosMult:  this.intraDayPosMult  ?? 0,
+            openStrengthMult: this.openStrengthMult ?? 0,
+            todMult:          this.todMult          ?? 0,
+            totalSamples:     this.totalSamples,
+            generation:       this.generation,
         }));
     }
 
@@ -1167,6 +1231,29 @@ class PredictionModel {
             );
         }
 
+        // ── Gradient steps for new intraday features (when stored at prediction time) ──
+        // Feature: intraday price position signal, normalised to [-1, +1]
+        const idSig = (item.intraDayPos != null) ? (parseFloat(item.intraDayPos) - 0.5) * 2 : null;
+        if (idSig !== null && Math.abs(idSig) > 0.05) {
+            this.intraDayPosMult = parseFloat(
+                Math.max(-1.0, Math.min(1.0, (this.intraDayPosMult ?? 0) + lr * error * idSig)).toFixed(4)
+            );
+        }
+        // Feature: open-strength momentum (current vs open, in %)
+        const openStr = (item.openStrength != null) ? parseFloat(item.openStrength) : null;
+        if (openStr !== null && Math.abs(openStr) > 0.01) {
+            this.openStrengthMult = parseFloat(
+                Math.max(-0.5, Math.min(0.5, (this.openStrengthMult ?? 0) + lr * error * openStr)).toFixed(4)
+            );
+        }
+        // Feature: time-of-day seasonality factor
+        const tod = (item.todFactor != null) ? parseFloat(item.todFactor) : null;
+        if (tod !== null && Math.abs(tod) > 0.005) {
+            this.todMult = parseFloat(
+                Math.max(-0.5, Math.min(0.5, (this.todMult ?? 0) + lr * error * tod)).toFixed(4)
+            );
+        }
+
         this.totalSamples++;
         this.generation++;
         item.result10min.learnedAt = Date.now(); // prevent double-training
@@ -1189,13 +1276,16 @@ class PredictionModel {
     // ── Serialisation helpers ──────────────────────────────────────────────
     _toJSONText() {
         return JSON.stringify({
-            _note: 'TradeReview 自适应预测模型权重',
-            exportedAt:   new Date().toISOString(),
-            version:      this.version,
-            totalSamples: this.totalSamples,
-            generation:   this.generation,
-            maDiffMult:   this.maDiffMult,
-            buckets:      this.buckets,
+            _note:            'TradeReview 自适应预测模型权重',
+            exportedAt:       new Date().toISOString(),
+            version:          this.version,
+            totalSamples:     this.totalSamples,
+            generation:       this.generation,
+            maDiffMult:       this.maDiffMult,
+            intraDayPosMult:  this.intraDayPosMult  ?? 0,
+            openStrengthMult: this.openStrengthMult ?? 0,
+            todMult:          this.todMult          ?? 0,
+            buckets:          this.buckets,
         }, null, 2);
     }
 
@@ -1203,10 +1293,13 @@ class PredictionModel {
         const p = JSON.parse(text);
         if (!p || p.version !== 2 || !Array.isArray(p.buckets) || p.buckets.length !== 6)
             throw new Error('文件格式不兼容，请使用本工具导出的权重文件');
-        this.version      = p.version;
-        this.totalSamples = p.totalSamples || 0;
-        this.generation   = p.generation   || 0;
-        this.maDiffMult   = p.maDiffMult   ?? 0.06;
+        this.version          = p.version;
+        this.totalSamples     = p.totalSamples || 0;
+        this.generation       = p.generation   || 0;
+        this.maDiffMult       = p.maDiffMult       ?? -0.1036;
+        this.intraDayPosMult  = p.intraDayPosMult  ?? 0;
+        this.openStrengthMult = p.openStrengthMult ?? 0;
+        this.todMult          = p.todMult          ?? 0;
         this.buckets = PredictionModel.BUCKET_DEFS.map((def, i) => ({
             ...def,
             base:         p.buckets[i]?.base         ?? def.base,
@@ -1321,6 +1414,74 @@ class ModelFileManager {
             const decoded = decodeURIComponent(href).replace('file:///', '');
             return decoded.replace(/\/[^\/]*$/, '').replace(/\//g, '\\');
         } catch { return null; }
+    }
+
+    // ── script.js handle persistence (separate key from model file) ──────────
+    static SCRIPT_KEY = 'scriptJSHandle';
+
+    static async _getScriptHandle() {
+        const db = await ModelFileManager._db();
+        return new Promise((res, rej) => {
+            const tx = db.transaction(ModelFileManager.STORE, 'readonly');
+            const rq = tx.objectStore(ModelFileManager.STORE).get(ModelFileManager.SCRIPT_KEY);
+            rq.onsuccess = (e) => res(e.target.result || null);
+            rq.onerror   = (e) => rej(e.target.error);
+        });
+    }
+
+    static async _saveScriptHandle(handle) {
+        const db = await ModelFileManager._db();
+        return new Promise((res, rej) => {
+            const tx = db.transaction(ModelFileManager.STORE, 'readwrite');
+            tx.objectStore(ModelFileManager.STORE).put(handle, ModelFileManager.SCRIPT_KEY);
+            tx.oncomplete = res; tx.onerror = (e) => rej(e.target.error);
+        });
+    }
+
+    /**
+     * One-click patch: auto-reuses the stored script.js handle so the user
+     * only needs to pick the file ONCE. Subsequent calls are fully silent.
+     * Returns the file name on success.
+     */
+    static async patchScriptJS() {
+        if (!ModelFileManager.supported)
+            throw new Error('浏览器不支持 File System Access API，请用 Chrome / Edge');
+
+        // ── Resolve handle ───────────────────────────────────────────────────
+        let handle = await ModelFileManager._getScriptHandle().catch(() => null);
+
+        if (handle) {
+            // Check / request permission without a new picker
+            let perm = await handle.queryPermission({ mode: 'readwrite' }).catch(() => 'none');
+            if (perm === 'prompt') {
+                perm = await handle.requestPermission({ mode: 'readwrite' }).catch(() => 'denied');
+            }
+            if (perm !== 'granted') handle = null; // stale or denied → re-pick
+        }
+
+        if (!handle) {
+            // First time (or permission permanently denied): show picker once
+            const picks = await window.showOpenFilePicker({
+                id: 'scriptJSPicker',
+                startIn: 'documents',
+                types: [{ description: 'script.js', accept: { 'application/javascript': ['.js'] } }],
+            });
+            handle = picks[0];
+            await ModelFileManager._saveScriptHandle(handle);
+        }
+
+        // ── Read → patch → write ─────────────────────────────────────────────
+        const file    = await handle.getFile();
+        const content = await file.text();
+        const marker  = /\/\/ \[WEIGHTS:START\][\s\S]*?\/\/ \[WEIGHTS:END\]/;
+        if (!marker.test(content))
+            throw new Error('选取的文件中找不到 [WEIGHTS:START]...[WEIGHTS:END] 标记，请确认选取的是 script.js');
+        const newBlock = predictionModel._toWeightsBlock();
+        const updated  = content.replace(marker, newBlock);
+        const writable = await handle.createWritable();
+        await writable.write(updated);
+        await writable.close();
+        return handle.name;
     }
 
     /**
@@ -1455,22 +1616,31 @@ class ContinuousValidator {
             const fallback  = this.validationPool.items.find(i => i.code === stock.code);
             const price     = stockData?.price || fallback?.entryPrice || 0;
             if (!price) continue;
-            const result = this.trendAnalyzer.analyze(price, price, stock.code);
-            const preds  = this.trendAnalyzer.generatePredictions(price, result.rsi, result.maDiff);
+            const result   = this.trendAnalyzer.analyze(price, price, stock.code);
+            const enriched = {
+                open: stockData?.open, high: stockData?.high,
+                low:  stockData?.low,  prevClose: stockData?.prevClose,
+                volume: stockData?.volume, amount: stockData?.amount,
+            };
+            const preds  = this.trendAnalyzer.generatePredictions(price, result.rsi, result.maDiff, enriched);
+            const feats  = preds._features || {};
             const entry  = {
-                id:          Date.now() + Math.random(),
-                code:        stock.code,
-                name:        stock.name,
-                entryPrice:  price,
-                addedAt:     Date.now(),
-                pred10min:   preds.pred10min,
-                pred2hr:     preds.pred2hr,
-                signal:      result.signal,
-                rsi:         result.rsi,
-                maDiff:      result.maDiff,
-                _cvRound:    this.round,
-                result10min: null,
-                result2hr:   null,
+                id:               Date.now() + Math.random(),
+                code:             stock.code,
+                name:             stock.name,
+                entryPrice:       price,
+                addedAt:          Date.now(),
+                pred10min:        preds.pred10min,
+                pred2hr:          preds.pred2hr,
+                signal:           result.signal,
+                rsi:              result.rsi,
+                maDiff:           result.maDiff,
+                intraDayPos:      feats.intraDayPos  ?? null,
+                openStrength:     feats.openStrength ?? null,
+                todFactor:        feats.todFactor    ?? null,
+                _cvRound:         this.round,
+                result10min:      null,
+                result2hr:        null,
             };
             this.validationPool.items.unshift(entry);
             this.roundItemIds.add(entry.id);
@@ -1598,55 +1768,110 @@ class TrendAnalyzer {
         }
     }
 
-    generatePredictions(currentPrice, rsi, maDiff) {
-        const rsiVal = parseFloat(rsi);
+    /**
+     * Generate 10-min and 2-hr predictions.
+     * @param {number} currentPrice
+     * @param {number|string} rsi
+     * @param {number|string} maDiff
+     * @param {object} enriched  Optional real market data: { open, high, low, prevClose, volume, amount }
+     *
+     * Formula (10-min base):
+     *   base = rsi_bucket_base
+     *        + maDiff * maDiffMult            (MA momentum, learned)
+     *        + intraDaySignal * idpMult        (intraday overbought/oversold, learned)
+     *        + openStrength * osMult           (vs-open momentum, learned)
+     *        + todFactor * todMult             (time-of-day seasonality, learned)
+     *        + timeNoise + priceNoise          (micro-jitter)
+     */
+    generatePredictions(currentPrice, rsi, maDiff, enriched = {}) {
+        const rsiVal    = parseFloat(rsi);
         const maDiffVal = parseFloat(maDiff);
         // Small time/price noise so consecutive analyses of the same stock differ slightly
         const timeNoise  = ((Date.now() / 1000) % 60) / 60 * 0.10 - 0.05; // ±0.05%
         const priceNoise = ((currentPrice * 100) % 17) / 170 * 0.10 - 0.03; // ±0.03%
 
         // RSI-driven base momentum: use learned model weights when available, else factory defaults
-        let base, maMult;
+        let base, maMult, idpMult, osMult, todM;
         if (predictionModel) {
-            base   = predictionModel.getBase(rsiVal);
-            maMult = predictionModel.maDiffMult;
+            base    = predictionModel.getBase(rsiVal);
+            maMult  = predictionModel.maDiffMult;
+            idpMult = predictionModel.intraDayPosMult  ?? 0;
+            osMult  = predictionModel.openStrengthMult ?? 0;
+            todM    = predictionModel.todMult          ?? 0;
         } else {
             if      (rsiVal > 70) base =  0.42;
-            else if (rsiVal > 60) base =  0.24;
-            else if (rsiVal > 50) base =  0.09;
-            else if (rsiVal > 40) base = -0.07;
-            else if (rsiVal > 30) base = -0.22;
+            else if (rsiVal > 60) base =  0.084;
+            else if (rsiVal > 50) base = -0.0193;
+            else if (rsiVal > 40) base =  0.058;
+            else if (rsiVal > 30) base = -0.2319;
             else                  base = -0.40;
-            maMult = 0.06;
+            maMult = -0.1036;
+            idpMult = 0; osMult = 0; todM = 0;
         }
 
-        base += maDiffVal * maMult + timeNoise + priceNoise;
+        base += maDiffVal * maMult;
+
+        // ── Feature 1: Intraday price position (stochastic-like, normalised to [-1, +1]) ──
+        // +1 = trading at day high (overbought intraday) | -1 = at day low (oversold intraday)
+        let intraDayPos = null, idSig = 0;
+        if (enriched.high != null && enriched.low != null && enriched.high > enriched.low) {
+            intraDayPos = (currentPrice - enriched.low) / (enriched.high - enriched.low);
+            idSig = (intraDayPos - 0.5) * 2;
+            base += idSig * idpMult;
+        }
+
+        // ── Feature 2: Open strength (盘中强度 vs 开盘价, in %) ──────────────────────
+        // Captures intraday momentum direction vs. the opening price.
+        let openStrength = null;
+        if (enriched.open != null && enriched.open > 0) {
+            openStrength = (currentPrice - enriched.open) / enriched.open * 100;
+            base += openStrength * osMult;
+        }
+
+        // ── Feature 3: Time-of-day seasonality ──────────────────────────────────
+        // 09:30-10:00: opening surge zone (+0.25) | 10:00-11:30: neutral (0)
+        // 13:00-13:30: post-lunch pulse (+0.15)   | 13:30-15:00: wind-down (-0.10)
+        const nowM = new Date().getHours() * 60 + new Date().getMinutes();
+        let todFactor = 0;
+        if      (nowM >= 570 && nowM < 600) todFactor =  0.25;
+        else if (nowM >= 600 && nowM < 690) todFactor =  0.00;
+        else if (nowM >= 780 && nowM < 810) todFactor =  0.15;
+        else if (nowM >= 810 && nowM < 900) todFactor = -0.10;
+        base += todFactor * todM;
+
+        base += timeNoise + priceNoise;
 
         const pct10  = parseFloat(base.toFixed(2));
-        // 2-hour window is ~4.2× the 10-minute movement (assumes roughly √18 time scaling)
+        // 2-hour window is ~4.2× the 10-min movement (assumes roughly √18 time scaling)
         const pct2hr = parseFloat((base * 4.2).toFixed(2));
         return {
             pred10min: { pct: pct10,  targetPrice: parseFloat((currentPrice * (1 + pct10  / 100)).toFixed(2)) },
-            pred2hr:   { pct: pct2hr, targetPrice: parseFloat((currentPrice * (1 + pct2hr / 100)).toFixed(2)) }
+            pred2hr:   { pct: pct2hr, targetPrice: parseFloat((currentPrice * (1 + pct2hr / 100)).toFixed(2)) },
+            // Feature snapshot stored so learn() can train on them
+            _features: { intraDayPos, openStrength, todFactor },
         };
     }
 
     _addToPool() {
         if (!this._lastAnalysis || !this.validationPool) return;
         const { code, name, currentPrice, result, predictions } = this._lastAnalysis;
+        const feats = predictions._features || {};
         this.validationPool.add({
-            id: Date.now(),
+            id:               Date.now(),
             code,
             name,
-            entryPrice: currentPrice,
-            addedAt: Date.now(),
-            pred10min: predictions.pred10min,
-            pred2hr:   predictions.pred2hr,
-            signal:    result.signal,
-            rsi:       result.rsi,
-            maDiff:    result.maDiff,
-            result10min: null,
-            result2hr:   null
+            entryPrice:       currentPrice,
+            addedAt:          Date.now(),
+            pred10min:        predictions.pred10min,
+            pred2hr:          predictions.pred2hr,
+            signal:           result.signal,
+            rsi:              result.rsi,
+            maDiff:           result.maDiff,
+            intraDayPos:      feats.intraDayPos  ?? null,  // Feature 1
+            openStrength:     feats.openStrength ?? null,  // Feature 2
+            todFactor:        feats.todFactor    ?? null,  // Feature 3
+            result10min:      null,
+            result2hr:        null
         });
         const btn = document.getElementById('addToPoolBtn');
         if (btn) {
@@ -1737,9 +1962,17 @@ class TrendAnalyzer {
         const currentPrice = stockData.price;
         const syntheticSell = currentPrice; // baseline: analyze vs. itself
         const result = this.analyze(currentPrice, syntheticSell, code);
-        const predictions = this.generatePredictions(currentPrice, result.rsi, result.maDiff);
-        this._lastAnalysis = { code, name: stockData.name, currentPrice, result, predictions };
-        this.renderResult(code, stockData.name, currentPrice, result, predictions);
+        const enriched = {
+            open:      stockData.open,
+            high:      stockData.high,
+            low:       stockData.low,
+            prevClose: stockData.prevClose,
+            volume:    stockData.volume,
+            amount:    stockData.amount,
+        };
+        const predictions = this.generatePredictions(currentPrice, result.rsi, result.maDiff, enriched);
+        this._lastAnalysis = { code, name: stockData.name, currentPrice, result, predictions, enriched };
+        this.renderResult(code, stockData.name, currentPrice, result, predictions, enriched);
         this.renderModelStatus();
     }
 
@@ -1774,6 +2007,15 @@ class TrendAnalyzer {
         const pathHintHtml = projectDir
             ? `<div class="ms-path-hint">📂 首次导出时请导航到：<code>${projectDir}</code></div>`
             : '';
+        // script.js handle linkage (for 🔄 button)
+        const scriptHandle = await ModelFileManager._getScriptHandle().catch(() => null);
+        const scriptPerm   = scriptHandle
+            ? await scriptHandle.queryPermission({ mode: 'readwrite' }).catch(() => 'none')
+            : 'none';
+        const scriptLinked = scriptPerm === 'granted' || scriptPerm === 'prompt';
+        const patchTitle   = scriptLinked
+            ? `🔄 刷新源码（已关联 script.js，点击自动写入）`
+            : `🔄 刷新源码（首次需选择 script.js，之后自动）`;
         let fileStatusHtml = '';
         let importBtnHtml  = '';
         if (!ModelFileManager.supported) {
@@ -1794,6 +2036,7 @@ class TrendAnalyzer {
                 <span class="ms-meta">第 ${predictionModel.generation} 代 · ${predictionModel.totalSamples} 个样本</span>
                 <button class="ms-export-btn" id="exportModelBtn" title="导出并覆盖权重文件">⬇ 导出</button>
                 ${importBtnHtml}
+                <button class="ms-patch-btn ${scriptLinked ? 'ms-patch-linked' : ''}" id="patchScriptBtn" title="${patchTitle}">🔄 刷新源码${scriptLinked ? ' 🟢' : ''}</button>
                 <button class="ms-reset-btn" id="resetModelBtn" title="重置所有学习权重到初始值">↺ 重置</button>
             </div>
             <div class="ms-file-status">${fileStatusHtml}${pathHintHtml}</div>
@@ -1805,6 +2048,14 @@ class TrendAnalyzer {
                 <div class="ms-stat">
                     <div class="ms-stat-label">maDiff 权重</div>
                     <div class="ms-stat-val ${predictionModel.maDiffMult >= 0 ? 'ms-good' : 'ms-bad'}">${maSign}${predictionModel.maDiffMult}</div>
+                </div>
+                <div class="ms-stat">
+                    <div class="ms-stat-label">盘中位置权重</div>
+                    <div class="ms-stat-val ${(predictionModel.intraDayPosMult ?? 0) >= 0 ? 'ms-good' : 'ms-bad'}">${((predictionModel.intraDayPosMult ?? 0) >= 0 ? '+' : '')}${(predictionModel.intraDayPosMult ?? 0).toFixed(4)}</div>
+                </div>
+                <div class="ms-stat">
+                    <div class="ms-stat-label">开盘强度权重</div>
+                    <div class="ms-stat-val ${(predictionModel.openStrengthMult ?? 0) >= 0 ? 'ms-good' : 'ms-bad'}">${((predictionModel.openStrengthMult ?? 0) >= 0 ? '+' : '')}${(predictionModel.openStrengthMult ?? 0).toFixed(4)}</div>
                 </div>
                 <div class="ms-stat">
                     <div class="ms-stat-label">学习状态</div>
@@ -1840,6 +2091,19 @@ class TrendAnalyzer {
                 if (err.name !== 'AbortError') alert(`导出失败：${err.message}`);
             }
         });
+        document.getElementById('patchScriptBtn')?.addEventListener('click', async () => {
+            try {
+                const name = await ModelFileManager.patchScriptJS();
+                const toast = document.createElement('div');
+                toast.className = 'ms-toast';
+                toast.textContent = `✅ ${name} 已写入第 ${predictionModel.generation} 代权重，刷新浏览器即生效`;
+                document.body.appendChild(toast);
+                setTimeout(() => toast.remove(), 4000);
+                this.renderModelStatus(); // 更新按钮为「已关联 🟢」状态
+            } catch (err) {
+                if (err.name !== 'AbortError') alert(`写入失败：${err.message}`);
+            }
+        });
         document.getElementById('restoreModelBtn')?.addEventListener('click', async () => {
             try {
                 const ok = await ModelFileManager.requestAndLoad();
@@ -1859,11 +2123,33 @@ class TrendAnalyzer {
         });
     }
 
-    renderResult(code, name, currentPrice, result, predictions) {
+    renderResult(code, name, currentPrice, result, predictions, enriched = {}) {
         if (!this.trendResult) return;
         const { rsi, maDiff, pctVsTarget, signal } = result;
         const maDiffClass = parseFloat(maDiff) >= 0 ? 'positive' : 'negative';
         const maDiffSign = parseFloat(maDiff) >= 0 ? '+' : '';
+
+        // Intraday feature cards (only shown when real market data is available)
+        let intraDayCardsHtml = '';
+        const feats = predictions._features || {};
+        if (feats.intraDayPos != null) {
+            const idPct = (feats.intraDayPos * 100).toFixed(0);
+            const idCls = feats.intraDayPos > 0.8 ? 'negative' : feats.intraDayPos < 0.2 ? 'positive' : '';
+            intraDayCardsHtml += `
+                <div class="trend-indicator-card">
+                    <div class="trend-indicator-label">盘中位置 (高低比)</div>
+                    <div class="trend-indicator-value ${idCls}">${idPct}%</div>
+                </div>`;
+        }
+        if (feats.openStrength != null) {
+            const osCls = feats.openStrength >= 0 ? 'positive' : 'negative';
+            const osSign = feats.openStrength >= 0 ? '+' : '';
+            intraDayCardsHtml += `
+                <div class="trend-indicator-card">
+                    <div class="trend-indicator-label">开盘强度</div>
+                    <div class="trend-indicator-value ${osCls}">${osSign}${feats.openStrength.toFixed(2)}%</div>
+                </div>`;
+        }
 
         // Summary text
         let summaryText = '';
@@ -1927,6 +2213,7 @@ class TrendAnalyzer {
                     <div class="trend-indicator-label">均线偏离 (MA5-MA20)</div>
                     <div class="trend-indicator-value ${maDiffClass}">${maDiffSign}${maDiff}%</div>
                 </div>
+                ${intraDayCardsHtml}
             </div>
             <div class="trend-summary">${this.escapeHtml(summaryText)}</div>
             ${predHtml}
