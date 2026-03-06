@@ -1106,23 +1106,23 @@ let continuousValidator = null;
 class PredictionModel {
     static STORAGE_KEY = 'predModel_v2';
 
-    // [WEIGHTS:START] ── 每日由 update_model.bat 自动更新，勿手动编辑此区块 ──
+        // [WEIGHTS:START] ── 每日由 update_model.bat 自动更新，勿手动编辑此区块 ──
     static HARDCODED_WEIGHTS = {
-        exportedAt:       '2026-03-05T08:18:36.690Z',
+        exportedAt:       '2026-03-06T07:25:09.905Z',
         version:           2,
-        totalSamples:      133,
-        generation:        133,
-        maDiffMult:       -0.1036,
+        totalSamples:      208,
+        generation:        208,
+        maDiffMult:       -0.0841,
         intraDayPosMult:   0.0,   // intraday stochastic [-1,+1] learnable weight
         openStrengthMult:  0.0,   // (current-open)/open*100 learnable weight
         todMult:           0.0,   // time-of-day seasonality learnable weight
         buckets: [
-            { id: 'rsi70', label: 'RSI > 70', minRsi: 70, base:     0.42,   count: 0, correctCount: 0 },
-            { id: 'rsi60', label: 'RSI 60-70', minRsi: 60, base:    0.084,   count: 50, correctCount: 9 },
-            { id: 'rsi50', label: 'RSI 50-60', minRsi: 50, base:  -0.0193,   count: 31, correctCount: 17 },
-            { id: 'rsi40', label: 'RSI 40-50', minRsi: 40, base:    0.058,   count: 50, correctCount: 18 },
+            { id: 'rsi70', label: 'RSI > 70', minRsi: 70, base:   0.4200,   count: 0, correctCount: 0 },
+            { id: 'rsi60', label: 'RSI 60-70', minRsi: 60, base:   0.0186,   count: 65, correctCount: 13 },
+            { id: 'rsi50', label: 'RSI 50-60', minRsi: 50, base:   0.0609,   count: 91, correctCount: 49 },
+            { id: 'rsi40', label: 'RSI 40-50', minRsi: 40, base:   0.0580,   count: 50, correctCount: 18 },
             { id: 'rsi30', label: 'RSI 30-40', minRsi: 30, base:  -0.2319,   count: 2, correctCount: 2 },
-            { id: 'rsi0', label: 'RSI < 30', minRsi: 0, base:     -0.4,   count: 0, correctCount: 0 },
+            { id: 'rsi0', label: 'RSI < 30', minRsi: 0, base:  -0.4000,   count: 0, correctCount: 0 }
         ],
     };
     // [WEIGHTS:END]
@@ -1330,6 +1330,30 @@ class PredictionModel {
             reader.readAsText(file);
         });
     }
+
+    /** Generate the weights block for patching script.js */
+    _toWeightsBlock() {
+        const now = new Date().toISOString();
+        const bucketsStr = this.buckets.map(b => 
+            `            { id: '${b.id}', label: '${b.label}', minRsi: ${b.minRsi}, base: ${b.base.toFixed(4).padStart(8)},   count: ${b.count}, correctCount: ${b.correctCount} }`
+        ).join(',\n');
+
+        return `    // [WEIGHTS:START] ── 每日由 update_model.bat 自动更新，勿手动编辑此区块 ──
+    static HARDCODED_WEIGHTS = {
+        exportedAt:       '${now}',
+        version:           ${this.version},
+        totalSamples:      ${this.totalSamples},
+        generation:        ${this.generation},
+        maDiffMult:       ${this.maDiffMult.toFixed(4)},
+        intraDayPosMult:   ${(this.intraDayPosMult || 0).toFixed(1)},   // intraday stochastic [-1,+1] learnable weight
+        openStrengthMult:  ${(this.openStrengthMult || 0).toFixed(1)},   // (current-open)/open*100 learnable weight
+        todMult:           ${(this.todMult || 0).toFixed(1)},   // time-of-day seasonality learnable weight
+        buckets: [
+${bucketsStr}
+        ],
+    };
+    // [WEIGHTS:END]`;
+    }
 }
 
 // ===== ModelFileManager — File System Access API persistence =====
@@ -1438,6 +1462,78 @@ class ModelFileManager {
         });
     }
 
+    static async _clearScriptHandle() {
+        const db = await ModelFileManager._db();
+        return new Promise((res, rej) => {
+            const tx = db.transaction(ModelFileManager.STORE, 'readwrite');
+            tx.objectStore(ModelFileManager.STORE).delete(ModelFileManager.SCRIPT_KEY);
+            tx.oncomplete = res; tx.onerror = (e) => rej(e.target.error);
+        });
+    }
+
+    /**
+     * Auto-locate script.js using the project directory or existing file handles
+     */
+    static async _autoLocateScriptJS() {
+        // Strategy 1: If user has already exported trade_model.json, use the same directory
+        try {
+            const modelHandle = await ModelFileManager._getHandle().catch(() => null);
+            if (modelHandle) {
+                // Get the directory of the model file and look for script.js there
+                const parentDir = await modelHandle.getParent?.().catch(() => null);
+                if (parentDir) {
+                    try {
+                        const scriptHandle = await parentDir.getFileHandle('script.js', { create: false });
+                        
+                        // Verify it contains the weights marker
+                        const file = await scriptHandle.getFile();
+                        const content = await file.text();
+                        const marker = /\/\/ \[WEIGHTS:START\][\s\S]*?\/\/ \[WEIGHTS:END\]/;
+                        
+                        if (marker.test(content)) {
+                            return scriptHandle;
+                        }
+                    } catch (e) {
+                        // script.js not found in model directory, continue to next strategy
+                    }
+                }
+            }
+        } catch (e) {
+            // Model handle strategy failed, continue
+        }
+
+        // Strategy 2: Use detected project directory with smart file picker
+        const projectDir = ModelFileManager._getProjectDir();
+        if (projectDir) {
+            // Show file picker pre-positioned to project directory
+            const picks = await window.showOpenFilePicker({
+                id: 'smartScriptJSPicker',
+                startIn: 'documents',
+                types: [{ 
+                    description: 'JavaScript 文件', 
+                    accept: { 'application/javascript': ['.js'] }
+                }],
+                multiple: false
+            });
+            
+            const scriptHandle = picks[0];
+            
+            // Verify it's the correct script.js
+            const file = await scriptHandle.getFile();
+            const content = await file.text();
+            const marker = /\/\/ \[WEIGHTS:START\][\s\S]*?\/\/ \[WEIGHTS:END\]/;
+            
+            if (!marker.test(content)) {
+                throw new Error('所选文件不包含权重标记，请选择项目中的 script.js 文件');
+            }
+            
+            return scriptHandle;
+        }
+        
+        // Strategy 3: Fallback to manual selection
+        throw new Error('无法自动检测项目环境，请手动选择 script.js 文件');
+    }
+
     /**
      * One-click patch: auto-reuses the stored script.js handle so the user
      * only needs to pick the file ONCE. Subsequent calls are fully silent.
@@ -1447,41 +1543,103 @@ class ModelFileManager {
         if (!ModelFileManager.supported)
             throw new Error('浏览器不支持 File System Access API，请用 Chrome / Edge');
 
-        // ── Resolve handle ───────────────────────────────────────────────────
-        let handle = await ModelFileManager._getScriptHandle().catch(() => null);
+        let attempts = 0;
+        const maxAttempts = 2;
 
-        if (handle) {
-            // Check / request permission without a new picker
-            let perm = await handle.queryPermission({ mode: 'readwrite' }).catch(() => 'none');
-            if (perm === 'prompt') {
-                perm = await handle.requestPermission({ mode: 'readwrite' }).catch(() => 'denied');
+        while (attempts < maxAttempts) {
+            attempts++;
+            
+            try {
+                // ── Resolve handle ───────────────────────────────────────────────────
+                let handle = await ModelFileManager._getScriptHandle().catch(() => null);
+
+                if (handle) {
+                    // Check / request permission without a new picker
+                    let perm = await handle.queryPermission({ mode: 'readwrite' }).catch(() => 'none');
+                    if (perm === 'prompt') {
+                        perm = await handle.requestPermission({ mode: 'readwrite' }).catch(() => 'denied');
+                    }
+                    if (perm !== 'granted') {
+                        handle = null; // stale or denied → re-pick
+                        // Clear the stale handle from storage
+                        await ModelFileManager._clearScriptHandle().catch(() => {});
+                    }
+                }
+
+                if (!handle) {
+                    // Try to auto-locate script.js in the same directory
+                    try {
+                        handle = await ModelFileManager._autoLocateScriptJS();
+                        if (handle) {
+                            await ModelFileManager._saveScriptHandle(handle);
+                        }
+                    } catch (autoError) {
+                        // If user cancelled, don't continue to fallback
+                        if (autoError.name === 'AbortError') {
+                            throw autoError;
+                        }
+                        // Auto-location failed, fall back to manual picker
+                        console.log('智能定位失败，使用手动选择:', autoError.message);
+                        
+                        const picks = await window.showOpenFilePicker({
+                            id: 'fallbackScriptJSPicker',
+                            startIn: 'documents',
+                            types: [{ description: 'JavaScript 文件 (script.js)', accept: { 'application/javascript': ['.js'] } }],
+                            multiple: false
+                        });
+                        handle = picks[0];
+                        
+                        // Verify the manually selected file
+                        const file = await handle.getFile();
+                        const content = await file.text();
+                        const marker = /\/\/ \[WEIGHTS:START\][\s\S]*?\/\/ \[WEIGHTS:END\]/;
+                        if (!marker.test(content)) {
+                            throw new Error('所选文件不包含权重标记，请选择项目中的 script.js 文件');
+                        }
+                        
+                        await ModelFileManager._saveScriptHandle(handle);
+                    }
+                }
+
+                // ── Read → patch → write ─────────────────────────────────────────────
+                const file = await handle.getFile();
+                const content = await file.text();
+                const marker = /\/\/ \[WEIGHTS:START\][\s\S]*?\/\/ \[WEIGHTS:END\]/;
+                if (!marker.test(content)) {
+                    throw new Error('选取的文件中找不到 [WEIGHTS:START]...[WEIGHTS:END] 标记，请确认选取的是正确的 script.js 文件');
+                }
+                
+                const newBlock = predictionModel._toWeightsBlock();
+                const updated = content.replace(marker, newBlock);
+                
+                // Create writable with error handling
+                const writable = await handle.createWritable();
+                try {
+                    await writable.write(updated);
+                    await writable.close();
+                } catch (writeError) {
+                    // Make sure to close the writable stream even if write fails
+                    await writable.abort().catch(() => {});
+                    throw writeError;
+                }
+                
+                return handle.name;
+                
+            } catch (error) {
+                // If this is the last attempt, throw the error
+                if (attempts >= maxAttempts) {
+                    throw new Error(`写入失败：${error.message}`);
+                }
+                
+                // For permission errors or handle issues, clear the stored handle and retry
+                if (error.name === 'NotAllowedError' || error.name === 'InvalidModificationError') {
+                    await ModelFileManager._clearScriptHandle().catch(() => {});
+                    continue; // Retry
+                } else {
+                    throw new Error(`写入失败：${error.message}`);
+                }
             }
-            if (perm !== 'granted') handle = null; // stale or denied → re-pick
         }
-
-        if (!handle) {
-            // First time (or permission permanently denied): show picker once
-            const picks = await window.showOpenFilePicker({
-                id: 'scriptJSPicker',
-                startIn: 'documents',
-                types: [{ description: 'script.js', accept: { 'application/javascript': ['.js'] } }],
-            });
-            handle = picks[0];
-            await ModelFileManager._saveScriptHandle(handle);
-        }
-
-        // ── Read → patch → write ─────────────────────────────────────────────
-        const file    = await handle.getFile();
-        const content = await file.text();
-        const marker  = /\/\/ \[WEIGHTS:START\][\s\S]*?\/\/ \[WEIGHTS:END\]/;
-        if (!marker.test(content))
-            throw new Error('选取的文件中找不到 [WEIGHTS:START]...[WEIGHTS:END] 标记，请确认选取的是 script.js');
-        const newBlock = predictionModel._toWeightsBlock();
-        const updated  = content.replace(marker, newBlock);
-        const writable = await handle.createWritable();
-        await writable.write(updated);
-        await writable.close();
-        return handle.name;
     }
 
     /**
@@ -2015,7 +2173,7 @@ class TrendAnalyzer {
         const scriptLinked = scriptPerm === 'granted' || scriptPerm === 'prompt';
         const patchTitle   = scriptLinked
             ? `🔄 刷新源码（已关联 script.js，点击自动写入）`
-            : `🔄 刷新源码（首次需选择 script.js，之后自动）`;
+            : `🔄 刷新源码（智能定位，基本无需手动选择）`;
         let fileStatusHtml = '';
         let importBtnHtml  = '';
         if (!ModelFileManager.supported) {
@@ -2092,16 +2250,56 @@ class TrendAnalyzer {
             }
         });
         document.getElementById('patchScriptBtn')?.addEventListener('click', async () => {
+            const btn = document.getElementById('patchScriptBtn');
+            const originalText = btn.textContent;
+            
             try {
+                // Show loading state
+                btn.textContent = '⏳ 正在写入...';
+                btn.disabled = true;
+                
                 const name = await ModelFileManager.patchScriptJS();
+                
+                // Show success message
                 const toast = document.createElement('div');
-                toast.className = 'ms-toast';
-                toast.textContent = `✅ ${name} 已写入第 ${predictionModel.generation} 代权重，刷新浏览器即生效`;
+                toast.className = 'ms-toast ms-toast-success';
+                toast.textContent = `✅ ${name} 已成功更新第 ${predictionModel.generation} 代权重，刷新浏览器生效`;
                 document.body.appendChild(toast);
                 setTimeout(() => toast.remove(), 4000);
+                
                 this.renderModelStatus(); // 更新按钮为「已关联 🟢」状态
             } catch (err) {
-                if (err.name !== 'AbortError') alert(`写入失败：${err.message}`);
+                if (err.name !== 'AbortError') {
+                    // Show error message
+                    const toast = document.createElement('div');
+                    toast.className = 'ms-toast ms-toast-error';
+                    toast.textContent = `❌ ${err.message}`;
+                    document.body.appendChild(toast);
+                    setTimeout(() => toast.remove(), 5000);
+                    
+                    // For some specific errors, show helpful hints
+                    if (err.message.includes('找不到') || err.message.includes('未找到')) {
+                        setTimeout(() => {
+                            const hintToast = document.createElement('div');
+                            hintToast.className = 'ms-toast ms-toast-info';
+                            hintToast.textContent = '💡 如已导出过模型，会自动定位script.js；首次使用需手动选择一次';
+                            document.body.appendChild(hintToast);
+                            setTimeout(() => hintToast.remove(), 6000);
+                        }, 1000);
+                    } else if (err.message.includes('权重标记')) {
+                        setTimeout(() => {
+                            const hintToast = document.createElement('div');
+                            hintToast.className = 'ms-toast ms-toast-info';
+                            hintToast.textContent = '💡 请选择TradeReview项目中带有权重标记的script.js文件';
+                            document.body.appendChild(hintToast);
+                            setTimeout(() => hintToast.remove(), 5000);
+                        }, 1000);
+                    }
+                }
+            } finally {
+                // Reset button state
+                btn.textContent = originalText;
+                btn.disabled = false;
             }
         });
         document.getElementById('restoreModelBtn')?.addEventListener('click', async () => {
