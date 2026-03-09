@@ -1,13 +1,13 @@
 {
   "_note": "TradeReview 自适应预测模型权重",
-  "exportedAt": "2026-03-06T06:56:48.230Z",
+  "exportedAt": "2026-03-09T07:47:10.621Z",
   "version": 2,
-  "totalSamples": 208,
-  "generation": 208,
-  "maDiffMult": -0.0841,
+  "totalSamples": 273,
+  "generation": 273,
+  "maDiffMult": 0.0223,
   "intraDayPosMult": 0,
   "openStrengthMult": 0,
-  "todMult": 0.0006,
+  "todMult": 0.0081,
   "buckets": [
     {
       "id": "rsi70",
@@ -29,9 +29,9 @@
       "id": "rsi50",
       "label": "RSI 50-60",
       "minRsi": 50,
-      "base": 0.0609,
-      "count": 91,
-      "correctCount": 49
+      "base": 0.0032,
+      "count": 156,
+      "correctCount": 74
     },
     {
       "id": "rsi40",

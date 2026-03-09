@@ -1106,20 +1106,20 @@ let continuousValidator = null;
 class PredictionModel {
     static STORAGE_KEY = 'predModel_v2';
 
-        // [WEIGHTS:START] ── 每日由 update_model.bat 自动更新，勿手动编辑此区块 ──
+            // [WEIGHTS:START] ── 每日由 update_model.bat 自动更新，勿手动编辑此区块 ──
     static HARDCODED_WEIGHTS = {
-        exportedAt:       '2026-03-06T07:25:09.905Z',
+        exportedAt:       '2026-03-09T07:47:14.433Z',
         version:           2,
-        totalSamples:      208,
-        generation:        208,
-        maDiffMult:       -0.0841,
+        totalSamples:      273,
+        generation:        273,
+        maDiffMult:       0.0223,
         intraDayPosMult:   0.0,   // intraday stochastic [-1,+1] learnable weight
         openStrengthMult:  0.0,   // (current-open)/open*100 learnable weight
         todMult:           0.0,   // time-of-day seasonality learnable weight
         buckets: [
             { id: 'rsi70', label: 'RSI > 70', minRsi: 70, base:   0.4200,   count: 0, correctCount: 0 },
             { id: 'rsi60', label: 'RSI 60-70', minRsi: 60, base:   0.0186,   count: 65, correctCount: 13 },
-            { id: 'rsi50', label: 'RSI 50-60', minRsi: 50, base:   0.0609,   count: 91, correctCount: 49 },
+            { id: 'rsi50', label: 'RSI 50-60', minRsi: 50, base:   0.0032,   count: 156, correctCount: 74 },
             { id: 'rsi40', label: 'RSI 40-50', minRsi: 40, base:   0.0580,   count: 50, correctCount: 18 },
             { id: 'rsi30', label: 'RSI 30-40', minRsi: 30, base:  -0.2319,   count: 2, correctCount: 2 },
             { id: 'rsi0', label: 'RSI < 30', minRsi: 0, base:  -0.4000,   count: 0, correctCount: 0 }
