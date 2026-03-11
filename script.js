@@ -1361,6 +1361,7 @@ class ModelFileManager {
     static DB_NAME   = 'TradeReviewDB';
     static STORE     = 'fileHandles';
     static KEY       = 'modelFileHandle';
+    static DIR_KEY   = 'projectDirHandle';
     static supported = typeof window !== 'undefined' && 'showSaveFilePicker' in window;
 
     static async _db() {
@@ -1471,72 +1472,78 @@ class ModelFileManager {
         });
     }
 
-    /**
-     * Auto-locate script.js using the project directory or existing file handles
-     */
-    static async _autoLocateScriptJS() {
-        // Strategy 1: If user has already exported trade_model.json, use the same directory
-        try {
-            const modelHandle = await ModelFileManager._getHandle().catch(() => null);
-            if (modelHandle) {
-                // Get the directory of the model file and look for script.js there
-                const parentDir = await modelHandle.getParent?.().catch(() => null);
-                if (parentDir) {
-                    try {
-                        const scriptHandle = await parentDir.getFileHandle('script.js', { create: false });
-                        
-                        // Verify it contains the weights marker
-                        const file = await scriptHandle.getFile();
-                        const content = await file.text();
-                        const marker = /\/\/ \[WEIGHTS:START\][\s\S]*?\/\/ \[WEIGHTS:END\]/;
-                        
-                        if (marker.test(content)) {
-                            return scriptHandle;
-                        }
-                    } catch (e) {
-                        // script.js not found in model directory, continue to next strategy
-                    }
-                }
-            }
-        } catch (e) {
-            // Model handle strategy failed, continue
-        }
+    // ── Project directory handle (unified access for save & patch) ──────────
+    static async _getDirHandle() {
+        const db = await ModelFileManager._db();
+        return new Promise((res, rej) => {
+            const tx = db.transaction(ModelFileManager.STORE, 'readonly');
+            const rq = tx.objectStore(ModelFileManager.STORE).get(ModelFileManager.DIR_KEY);
+            rq.onsuccess = (e) => res(e.target.result || null);
+            rq.onerror   = (e) => rej(e.target.error);
+        });
+    }
 
-        // Strategy 2: Use detected project directory with smart file picker
-        const projectDir = ModelFileManager._getProjectDir();
-        if (projectDir) {
-            // Show file picker pre-positioned to project directory
-            const picks = await window.showOpenFilePicker({
-                id: 'smartScriptJSPicker',
-                startIn: 'documents',
-                types: [{ 
-                    description: 'JavaScript 文件', 
-                    accept: { 'application/javascript': ['.js'] }
-                }],
-                multiple: false
-            });
-            
-            const scriptHandle = picks[0];
-            
-            // Verify it's the correct script.js
-            const file = await scriptHandle.getFile();
-            const content = await file.text();
-            const marker = /\/\/ \[WEIGHTS:START\][\s\S]*?\/\/ \[WEIGHTS:END\]/;
-            
-            if (!marker.test(content)) {
-                throw new Error('所选文件不包含权重标记，请选择项目中的 script.js 文件');
-            }
-            
-            return scriptHandle;
-        }
-        
-        // Strategy 3: Fallback to manual selection
-        throw new Error('无法自动检测项目环境，请手动选择 script.js 文件');
+    static async _saveDirHandle(handle) {
+        const db = await ModelFileManager._db();
+        return new Promise((res, rej) => {
+            const tx = db.transaction(ModelFileManager.STORE, 'readwrite');
+            tx.objectStore(ModelFileManager.STORE).put(handle, ModelFileManager.DIR_KEY);
+            tx.oncomplete = res; tx.onerror = (e) => rej(e.target.error);
+        });
     }
 
     /**
-     * One-click patch: auto-reuses the stored script.js handle so the user
-     * only needs to pick the file ONCE. Subsequent calls are fully silent.
+     * Returns the stored project directory handle with granted readwrite permission.
+     * On the very first call (or after permission is revoked), opens showDirectoryPicker()
+     * once so the user only has to select the folder a single time.
+     */
+    static async _getOrPickProjectDir() {
+        let dirHandle = await ModelFileManager._getDirHandle().catch(() => null);
+        if (dirHandle) {
+            const perm = await dirHandle.queryPermission({ mode: 'readwrite' }).catch(() => 'none');
+            let effectivePerm = perm;
+            if (perm === 'prompt') {
+                effectivePerm = await dirHandle.requestPermission({ mode: 'readwrite' }).catch(() => 'denied');
+            }
+            if (effectivePerm === 'granted') return dirHandle;
+        }
+        // First time or permission lost: ask the user to select the project folder once.
+        dirHandle = await window.showDirectoryPicker({ id: 'projectDirPicker', mode: 'readwrite' });
+        await ModelFileManager._saveDirHandle(dirHandle);
+        return dirHandle;
+    }
+
+    /** Returns 'granted' | 'prompt' | 'denied' | 'none' for the project directory handle. */
+    static async checkDirPermission() {
+        if (!ModelFileManager.supported) return 'none';
+        try {
+            const handle = await ModelFileManager._getDirHandle();
+            if (!handle) return 'none';
+            return await handle.queryPermission({ mode: 'readwrite' });
+        } catch { return 'none'; }
+    }
+
+    /**
+     * Auto-locate script.js using the stored project directory handle.
+     * If no directory is stored yet, opens showDirectoryPicker() once.
+     */
+    static async _autoLocateScriptJS() {
+        const dirHandle = await ModelFileManager._getOrPickProjectDir();
+        const scriptHandle = await dirHandle.getFileHandle('script.js', { create: false });
+        const file = await scriptHandle.getFile();
+        const content = await file.text();
+        const marker = /\/\/ \[WEIGHTS:START\][\s\S]*?\/\/ \[WEIGHTS:END\]/;
+        if (!marker.test(content)) {
+            throw new Error('所选目录中的 script.js 不包含权重标记，请确认选择了正确的项目文件夹');
+        }
+        return scriptHandle;
+    }
+
+    /**
+     * One-click patch: uses the stored project directory handle to locate and
+     * overwrite script.js without any dialog. The very first call opens
+     * showDirectoryPicker() so the user selects the project folder once;
+     * all subsequent calls are fully silent.
      * Returns the file name on success.
      */
     static async patchScriptJS() {
@@ -1567,36 +1574,9 @@ class ModelFileManager {
                 }
 
                 if (!handle) {
-                    // Try to auto-locate script.js in the same directory
-                    try {
-                        handle = await ModelFileManager._autoLocateScriptJS();
-                        if (handle) {
-                            await ModelFileManager._saveScriptHandle(handle);
-                        }
-                    } catch (autoError) {
-                        // If user cancelled, don't continue to fallback
-                        if (autoError.name === 'AbortError') {
-                            throw autoError;
-                        }
-                        // Auto-location failed, fall back to manual picker
-                        console.log('智能定位失败，使用手动选择:', autoError.message);
-                        
-                        const picks = await window.showOpenFilePicker({
-                            id: 'fallbackScriptJSPicker',
-                            startIn: 'documents',
-                            types: [{ description: 'JavaScript 文件 (script.js)', accept: { 'application/javascript': ['.js'] } }],
-                            multiple: false
-                        });
-                        handle = picks[0];
-                        
-                        // Verify the manually selected file
-                        const file = await handle.getFile();
-                        const content = await file.text();
-                        const marker = /\/\/ \[WEIGHTS:START\][\s\S]*?\/\/ \[WEIGHTS:END\]/;
-                        if (!marker.test(content)) {
-                            throw new Error('所选文件不包含权重标记，请选择项目中的 script.js 文件');
-                        }
-                        
+                    // Auto-locate script.js via the stored project directory (or pick it once).
+                    handle = await ModelFileManager._autoLocateScriptJS();
+                    if (handle) {
                         await ModelFileManager._saveScriptHandle(handle);
                     }
                 }
@@ -1626,6 +1606,9 @@ class ModelFileManager {
                 return handle.name;
                 
             } catch (error) {
+                // AbortError means the user cancelled the directory/file picker intentionally.
+                // Re-throw immediately without retrying so the caller can silently ignore it.
+                if (error.name === 'AbortError') throw error;
                 // If this is the last attempt, throw the error
                 if (attempts >= maxAttempts) {
                     throw new Error(`写入失败：${error.message}`);
@@ -1643,33 +1626,20 @@ class ModelFileManager {
     }
 
     /**
-     * Export & overwrite using stored handle.
-     * First call opens Save dialog; subsequent calls are silent.
+     * Export & overwrite trade_model.json in the project directory.
+     * First call opens a folder picker (showDirectoryPicker) so the user selects
+     * the project folder once; all subsequent calls write silently without any dialog.
      */
     static async save() {
         if (!ModelFileManager.supported) {
             predictionModel.exportWeights(); // blob fallback
             return '(下载)';
         }
-        let handle = await ModelFileManager._getHandle().catch(() => null);
-        // Verify permission
-        if (handle) {
-            const perm = await handle.queryPermission({ mode: 'readwrite' }).catch(() => 'none');
-            if (perm === 'prompt') {
-                const req = await handle.requestPermission({ mode: 'readwrite' }).catch(() => 'denied');
-                if (req !== 'granted') handle = null;
-            } else if (perm !== 'granted') {
-                handle = null;
-            }
-        }
-        // First time: open Save picker
-        if (!handle) {
-            handle = await window.showSaveFilePicker({
-                suggestedName: 'trade_model.json',
-                types: [{ description: 'JSON 权重文件', accept: { 'application/json': ['.json'] } }],
-            });
-            await ModelFileManager._saveHandle(handle);
-        }
+        // Get (or pick once) the project directory, then write trade_model.json into it.
+        const dirHandle = await ModelFileManager._getOrPickProjectDir();
+        const handle = await dirHandle.getFileHandle('trade_model.json', { create: true });
+        // Cache the file handle so checkPermission() / autoLoad() still work.
+        await ModelFileManager._saveHandle(handle);
         const writable = await handle.createWritable();
         await writable.write(predictionModel._toJSONText());
         await writable.close();
@@ -2161,19 +2131,24 @@ class TrendAnalyzer {
 
         // File linkage status
         const filePerm    = await ModelFileManager.checkPermission();
+        const dirPerm     = await ModelFileManager.checkDirPermission();
         const projectDir  = ModelFileManager._getProjectDir();
-        const pathHintHtml = projectDir
-            ? `<div class="ms-path-hint">📂 首次导出时请导航到：<code>${projectDir}</code></div>`
-            : '';
+        let pathHintHtml  = '';
+        if (dirPerm === 'granted' || dirPerm === 'prompt') {
+            pathHintHtml = `<div class="ms-path-hint ms-path-ok">📂 项目文件夹已关联，导出/刷新源码将直接覆盖原文件</div>`;
+        } else if (projectDir) {
+            pathHintHtml = `<div class="ms-path-hint">📂 检测到项目目录：<code>${projectDir}</code>（首次操作时选择此文件夹）</div>`;
+        }
         // script.js handle linkage (for 🔄 button)
         const scriptHandle = await ModelFileManager._getScriptHandle().catch(() => null);
         const scriptPerm   = scriptHandle
             ? await scriptHandle.queryPermission({ mode: 'readwrite' }).catch(() => 'none')
             : 'none';
-        const scriptLinked = scriptPerm === 'granted' || scriptPerm === 'prompt';
-        const patchTitle   = scriptLinked
-            ? `🔄 刷新源码（已关联 script.js，点击自动写入）`
-            : `🔄 刷新源码（智能定位，基本无需手动选择）`;
+        // The patch button is ready if either the script file OR the project directory is linked.
+        const canPatchScript = scriptPerm === 'granted' || scriptPerm === 'prompt' || dirPerm === 'granted' || dirPerm === 'prompt';
+        const patchTitle   = canPatchScript
+            ? `🔄 刷新源码（已关联项目文件夹，点击直接覆盖 script.js）`
+            : `🔄 刷新源码（首次使用时选择项目文件夹，之后自动覆盖）`;
         let fileStatusHtml = '';
         let importBtnHtml  = '';
         if (!ModelFileManager.supported) {
@@ -2194,7 +2169,7 @@ class TrendAnalyzer {
                 <span class="ms-meta">第 ${predictionModel.generation} 代 · ${predictionModel.totalSamples} 个样本</span>
                 <button class="ms-export-btn" id="exportModelBtn" title="导出并覆盖权重文件">⬇ 导出</button>
                 ${importBtnHtml}
-                <button class="ms-patch-btn ${scriptLinked ? 'ms-patch-linked' : ''}" id="patchScriptBtn" title="${patchTitle}">🔄 刷新源码${scriptLinked ? ' 🟢' : ''}</button>
+                <button class="ms-patch-btn ${canPatchScript ? 'ms-patch-linked' : ''}" id="patchScriptBtn" title="${patchTitle}">🔄 刷新源码${canPatchScript ? ' 🟢' : ''}</button>
                 <button class="ms-reset-btn" id="resetModelBtn" title="重置所有学习权重到初始值">↺ 重置</button>
             </div>
             <div class="ms-file-status">${fileStatusHtml}${pathHintHtml}</div>
