@@ -1507,6 +1507,10 @@ h2 {
     margin-top: 4px;
     word-break: break-all;
 }
+.ms-path-hint.ms-path-ok {
+    color: #16a34a;
+    font-weight: 500;
+}
 .ms-path-hint code {
     background: #f1f5f9;
     padding: 1px 5px;
