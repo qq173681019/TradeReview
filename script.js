@@ -17,7 +17,21 @@ const FALLBACK_STOCK_DATABASE = {
     '601166': { name: '兴业银行', price: 20.50 },
     '600016': { name: '民生银行', price: 4.50 },
     '300750': { name: '宁德时代', price: 175.50 },
-    '002594': { name: '比亚迪', price: 245.80 }
+    '002594': { name: '比亚迪', price: 245.80 },
+    // Common ETFs (Shenzhen SZ: 1xxxx / 0xxxx range, Shanghai SH: 5xxxx range)
+    '159611': { name: '中证A500ETF贝塔', price: 0.77 },
+    '159919': { name: '嘉实沪深300ETF', price: 4.15 },
+    '159915': { name: '易方达创业板ETF', price: 1.55 },
+    '159920': { name: '嘉实纳斯达克ETF', price: 1.72 },
+    '159655': { name: '科创50ETF', price: 0.82 },
+    '510300': { name: '华泰柏瑞沪深300ETF', price: 4.15 },
+    '510500': { name: '南方中证500ETF', price: 6.95 },
+    '510050': { name: '华夏上证50ETF', price: 2.60 },
+    '513500': { name: '标普500ETF', price: 0.96 },
+    '512880': { name: '国泰中证证券ETF', price: 1.68 },
+    '512010': { name: '易方达医疗卫生ETF', price: 0.98 },
+    '512200': { name: '南方中证地产ETF', price: 0.52 },
+    '515180': { name: '红利ETF华泰', price: 1.35 },
 };
 
 // ===== A-Share Trading Hours Guard =====
@@ -220,9 +234,51 @@ function _fetchStockFromTencent(fullCode) {
     });
 }
 
+// Third-source fallback: NetEase 163 Finance JSONP API (supports both stocks and ETFs)
+function _fetchStockFromNetease(code) {
+    return new Promise((resolve, reject) => {
+        // NetEase market prefix: 0=SH (5/6/7/9xxxxx), 1=SZ (0/1/2/3xxxxx)
+        const mktCode = /^[5679]/.test(code) ? '0' : '1';
+        const netCode = mktCode + code;
+        const cbName = '_ne_' + Date.now() + '_' + (Math.random() * 1e6 | 0);
+        const script = document.createElement('script');
+
+        window[cbName] = function(data) {
+            delete window[cbName];
+            if (script.parentNode) script.parentNode.removeChild(script);
+            const item = data && data[netCode];
+            if (item) {
+                const price = parseFloat(item.price);
+                const name = item.name;
+                if (name && price > 0) { resolve({ name, price }); return; }
+            }
+            resolve(null);
+        };
+
+        script.onerror = () => {
+            delete window[cbName];
+            if (script.parentNode) script.parentNode.removeChild(script);
+            reject(new Error('Netease load failed'));
+        };
+
+        script.src = `https://api.money.126.net/data/feed/${netCode},money.api?callback=${cbName}`;
+
+        setTimeout(() => {
+            if (window[cbName]) {
+                delete window[cbName];
+                if (script.parentNode) script.parentNode.removeChild(script);
+                reject(new Error('Netease timeout'));
+            }
+        }, 5000);
+        document.head.appendChild(script);
+    });
+}
+
 async function getStockDataShared(code) {
     if (!/^\d{6}$/.test(code)) return null;
-    const prefix = code.startsWith('6') ? 'sh' : 'sz';
+    // SH: codes starting with 5 (ETF/LOF), 6 (A-share), 7 (CDR), 9 (B-share)
+    // SZ: codes starting with 0, 1, 2, 3
+    const prefix = /^[5679]/.test(code) ? 'sh' : 'sz';
     const fullCode = prefix + code;
     try {
         const data = await _fetchStockFromSina(fullCode);
@@ -230,6 +286,10 @@ async function getStockDataShared(code) {
     } catch { /* fallthrough */ }
     try {
         const data = await _fetchStockFromTencent(fullCode);
+        if (data) return data;
+    } catch { /* fallthrough */ }
+    try {
+        const data = await _fetchStockFromNetease(code);
         if (data) return data;
     } catch { /* fallthrough */ }
     return FALLBACK_STOCK_DATABASE[code] || null;
