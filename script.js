@@ -32,6 +32,7 @@ const FALLBACK_STOCK_DATABASE = {
     '512010': { name: '易方达医疗卫生ETF', price: 0.98 },
     '512200': { name: '南方中证地产ETF', price: 0.52 },
     '515180': { name: '红利ETF华泰', price: 1.35 },
+    '159632': { name: '纳斯达克ETF华安', price: 2.22 },
 };
 
 // ===== A-Share Trading Hours Guard =====
