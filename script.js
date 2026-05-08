@@ -295,18 +295,136 @@ async function getStockDataShared(code) {
     return FALLBACK_STOCK_DATABASE[code] || null;
 }
 
+const WATCHLIST_CACHE_KEY = 'stocks';
+let watchlistCloudWarningShown = false;
+
+function showTransientToast(message, type = '') {
+    const toast = document.createElement('div');
+    toast.className = 'ms-toast' + (type ? ` ms-toast-${type}` : '');
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+}
+
+function normalizeWatchlistStocks(stocks) {
+    if (!Array.isArray(stocks)) return [];
+
+    return stocks.map(stock => ({
+        id: Number(stock.id),
+        code: String(stock.code || '').trim(),
+        name: String(stock.name || '').trim(),
+        currentPrice: Number(stock.currentPrice),
+        sellPrice: Number(stock.sellPrice),
+        addedDate: String(stock.addedDate || new Date().toISOString())
+    })).filter(stock => {
+        return Number.isFinite(stock.id)
+            && /^\d{6}$/.test(stock.code)
+            && stock.name
+            && Number.isFinite(stock.currentPrice)
+            && stock.currentPrice > 0
+            && Number.isFinite(stock.sellPrice)
+            && stock.sellPrice > 0;
+    });
+}
+
+class WatchlistStorage {
+    static loadLocalCache() {
+        const stored = localStorage.getItem(WATCHLIST_CACHE_KEY);
+        if (!stored) return [];
+
+        try {
+            return normalizeWatchlistStocks(JSON.parse(stored));
+        } catch (error) {
+            console.error('Failed to parse stored stocks:', error);
+            return [];
+        }
+    }
+
+    static saveLocalCache(stocks) {
+        localStorage.setItem(WATCHLIST_CACHE_KEY, JSON.stringify(normalizeWatchlistStocks(stocks)));
+    }
+
+    static async load() {
+        const cachedStocks = WatchlistStorage.loadLocalCache();
+
+        try {
+            const response = await fetch('/api/watchlist', { cache: 'no-store' });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(payload.error || '加载云端关注池失败');
+            }
+
+            const remoteStocks = normalizeWatchlistStocks(payload.stocks);
+            if (remoteStocks.length === 0 && cachedStocks.length > 0) {
+                const migrated = await WatchlistStorage.save(cachedStocks, { silentWarning: true });
+                return {
+                    stocks: migrated.stocks,
+                    source: migrated.source,
+                    notice: migrated.source === 'remote' ? '已将本地关注池迁移到云端' : migrated.warning
+                };
+            }
+
+            WatchlistStorage.saveLocalCache(remoteStocks);
+            return { stocks: remoteStocks, source: 'remote' };
+        } catch (error) {
+            console.warn('Watchlist cloud load failed, falling back to local cache:', error);
+            return {
+                stocks: cachedStocks,
+                source: 'local',
+                warning: '云端关注池暂不可用，当前仅回退到本机浏览器存储'
+            };
+        }
+    }
+
+    static async save(stocks, options = {}) {
+        const normalizedStocks = normalizeWatchlistStocks(stocks);
+        WatchlistStorage.saveLocalCache(normalizedStocks);
+
+        try {
+            const response = await fetch('/api/watchlist', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ stocks: normalizedStocks })
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(payload.error || '保存云端关注池失败');
+            }
+
+            const savedStocks = normalizeWatchlistStocks(payload.stocks);
+            WatchlistStorage.saveLocalCache(savedStocks);
+            return { stocks: savedStocks, source: 'remote' };
+        } catch (error) {
+            console.warn('Watchlist cloud save failed, local cache retained:', error);
+            return {
+                stocks: normalizedStocks,
+                source: 'local',
+                warning: options.silentWarning ? null : '云端关注池保存失败，本次改动仅保存在当前浏览器'
+            };
+        }
+    }
+}
+
 // Stock watchlist application
 class StockWatchlist {
     constructor() {
-        this.stocks = this.loadStocks();
-        this.init();
+        this.stocks = [];
+        this.ready = this.init();
     }
 
-    init() {
-        this.renderStocks();
+    async init() {
+        this.renderLoading();
         this.setupEventListeners();
+        await this.loadStocks();
         // Update prices periodically (simulated)
         setInterval(() => this.simulatePriceUpdates(), 5000);
+    }
+
+    renderLoading() {
+        const stockList = document.getElementById('stockList');
+        if (stockList) {
+            stockList.innerHTML = '<p class="empty-message">关注池加载中...</p>';
+        }
     }
 
     setupEventListeners() {
@@ -347,6 +465,38 @@ class StockWatchlist {
             refreshAllBtn.addEventListener('click', () => {
                 this.refreshAllPrices();
             });
+        }
+    }
+
+    async loadStocks() {
+        const result = await WatchlistStorage.load();
+        this.stocks = result.stocks;
+        this.renderStocks();
+
+        if (result.notice) {
+            showTransientToast(result.notice, 'success');
+        }
+
+        if (result.warning && !watchlistCloudWarningShown) {
+            watchlistCloudWarningShown = true;
+            showTransientToast(result.warning, 'error');
+        }
+
+        if (this.stocks.length > 0) {
+            this.simulatePriceUpdates();
+        }
+    }
+
+    cacheStocks() {
+        WatchlistStorage.saveLocalCache(this.stocks);
+    }
+
+    async persistStocks() {
+        const result = await WatchlistStorage.save(this.stocks);
+        this.stocks = result.stocks;
+        if (result.warning && !watchlistCloudWarningShown) {
+            watchlistCloudWarningShown = true;
+            showTransientToast(result.warning, 'error');
         }
     }
 
@@ -444,7 +594,7 @@ class StockWatchlist {
             };
 
             this.stocks.push(stock);
-            this.saveStocks();
+            await this.persistStocks();
             this.renderStocks();
             this.clearForm();
         } catch (error) {
@@ -457,10 +607,10 @@ class StockWatchlist {
         return getStockDataShared(code);
     }
 
-    deleteStock(id) {
+    async deleteStock(id) {
         if (confirm('确定要删除这个股票吗？')) {
             this.stocks = this.stocks.filter(stock => stock.id !== id);
-            this.saveStocks();
+            await this.persistStocks();
             this.renderStocks();
         }
     }
@@ -469,7 +619,7 @@ class StockWatchlist {
         const stock = this.stocks.find(s => s.id === id);
         if (stock) {
             stock.currentPrice = newPrice;
-            this.saveStocks();
+            this.cacheStocks();
             this.renderStocks();
         }
     }
@@ -488,7 +638,7 @@ class StockWatchlist {
                 // Keep the old price if update fails
             }
         }
-        this.saveStocks();
+        this.cacheStocks();
         this.renderStocks();
     }
 
@@ -719,22 +869,6 @@ class StockWatchlist {
         document.getElementById('sellPrice').value = '';
         document.getElementById('stockPreview').style.display = 'none';
     }
-
-    saveStocks() {
-        localStorage.setItem('stocks', JSON.stringify(this.stocks));
-    }
-
-    loadStocks() {
-        const stored = localStorage.getItem('stocks');
-        if (!stored) return [];
-        
-        try {
-            return JSON.parse(stored);
-        } catch (e) {
-            console.error('Failed to parse stored stocks:', e);
-            return [];
-        }
-    }
 }
 
 // ===== Validation Pool =====
@@ -947,6 +1081,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     const tabManager = new TabManager();
     const watchlist = new StockWatchlist();
+    await watchlist.ready;
     const heatmap = new SectorHeatmap();
     const validationPool = new ValidationPool();
     validationPool.container = document.getElementById('validationPoolContainer');
